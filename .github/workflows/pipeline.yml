@@ -1,55 +1,26 @@
 name: Platform Pipeline
 
 on:
-
   workflow_call:
 
 jobs:
-
   context:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout consumer repository
-        uses: actions/checkout@v4
+      - name: Setup platform
+        uses: ./.github/actions/setup
 
       - name: Load Context
-        run: ./scripts/load-context.sh
+        run: bash platform/scripts/load-context.sh
 
   phase1:
-
     needs: context
-
     runs-on: ubuntu-latest
 
     steps:
+      - name: Setup platform
+        uses: ./.github/actions/setup
 
-      - uses: actions/checkout@v4
-
-      - run: ./scripts/phase1.sh
-
-  phase2:
-
-    needs: phase1
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - run: ./scripts/phase2.sh
-
-  phase3:
-
-    needs: phase2
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - run: ./scripts/phase3.sh
+      - name: Run Phase 1
+        run: bash platform/scripts/phase1.sh

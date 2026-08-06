@@ -1,0 +1,16 @@
+name: Platform Setup
+description: Prepare the runner for the Platform Pipeline
+
+runs:
+  using: composite
+
+  steps:
+    - name: Checkout consumer repository
+      uses: actions/checkout@v4
+
+    - name: Checkout platform repository
+      uses: actions/checkout@v4
+      with:
+        repository: TasniimCh/Platform-Pipeline
+        ref: master
+        path: platform
