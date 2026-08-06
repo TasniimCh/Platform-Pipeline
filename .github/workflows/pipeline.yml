@@ -3,24 +3,45 @@ name: Platform Pipeline
 on:
   workflow_call:
 
+env:
+  PLATFORM_PATH: platform
+
 jobs:
+
   context:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup platform
-        uses: ./.github/actions/setup
+
+      - name: Checkout consumer repository
+        uses: actions/checkout@v4
+
+      - name: Checkout platform repository
+        uses: actions/checkout@v4
+        with:
+          repository: TasniimCh/Platform-Pipeline
+          ref: master
+          path: ${{ env.PLATFORM_PATH }}
 
       - name: Load Context
-        run: bash platform/scripts/load-context.sh
+        run: bash ${{ env.PLATFORM_PATH }}/scripts/load-context.sh
+
 
   phase1:
     needs: context
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup platform
-        uses: ./.github/actions/setup
+
+      - name: Checkout consumer repository
+        uses: actions/checkout@v4
+
+      - name: Checkout platform repository
+        uses: actions/checkout@v4
+        with:
+          repository: TasniimCh/Platform-Pipeline
+          ref: master
+          path: ${{ env.PLATFORM_PATH }}
 
       - name: Run Phase 1
-        run: bash platform/scripts/phase1.sh
+        run: bash ${{ env.PLATFORM_PATH }}/scripts/phase1.sh
