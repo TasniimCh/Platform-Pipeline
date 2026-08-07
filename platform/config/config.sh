@@ -65,9 +65,16 @@ def reverse_map(capability_map):
 
 
 def main():
+    print("Loading default...", file=sys.stderr) 
     default = load_yaml(DEFAULT_PATH)
+    print("Loading custom...", file=sys.stderr)
     custom = load_yaml(CUSTOM_PATH)
+    print("Loading capability map...", file=sys.stderr)
     capability_map = load_yaml(CAPABILITY_MAP_PATH)
+    
+    print(default, file=sys.stderr)
+    print(custom, file=sys.stderr)
+    print(capability_map, file=sys.stderr)
     scanner_to_cap = reverse_map(capability_map)
 
     capabilities = dict(default.get('capabilities', {}))

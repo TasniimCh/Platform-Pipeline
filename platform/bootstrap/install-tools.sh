@@ -136,7 +136,7 @@ install_gitleaks() {
 
 install_required_tools() {
   local config_path="$1"
-  local workspace="$PWD"
+  local workspace="${WORKSPACE:-$PWD}"
 
   if [ -z "$config_path" ] || [ ! -f "$config_path" ]; then
     if [ "$config_path" = "$workspace/.devsecops/pipeline.yaml" ] || [ "$config_path" = ".devsecops/pipeline.yaml" ]; then
@@ -148,6 +148,7 @@ install_required_tools() {
   fi
 
   install_python_package pyyaml
+
 
   local scanners
   scanners=$(enabled_scanner_tools "$workspace" "$config_path")
@@ -179,6 +180,9 @@ install_required_tools() {
 }
 
 main() {
+  echo "DEFAULT_CONFIG=$DEFAULT_CONFIG"
+  echo "CAPABILITY_MAP=$CAPABILITY_MAP"
+
   if [ "$#" -lt 1 ]; then
     log_error "Missing configuration file path"
     exit $PLATFORM_EXIT_CONFIG
