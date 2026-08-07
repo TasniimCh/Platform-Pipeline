@@ -147,6 +147,8 @@ install_required_tools() {
     fi
   fi
 
+  install_python_package pyyaml
+
   local scanners
   scanners=$(enabled_scanner_tools "$workspace" "$config_path")
 

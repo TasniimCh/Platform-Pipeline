@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sys
+import yaml
 
 DEFAULT_PATH = sys.argv[1]
 CUSTOM_PATH = sys.argv[2]
@@ -47,31 +48,13 @@ def parse_value(raw):
     return raw
 
 
-def parse_yaml(path):
-    data = {}
+
+def load_yaml(path):
     if not os.path.isfile(path):
-        return data
-    section = None
-    with open(path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.split('#', 1)[0].rstrip()
-            if not line:
-                continue
-            m = re.match(r'^(\s*)([^:]+):\s*(.*)$', line)
-            if not m:
-                continue
-            indent = len(m.group(1))
-            key = m.group(2).strip()
-            value = m.group(3).strip()
-            if indent == 0:
-                section = key
-                if value != '':
-                    data[section] = parse_value(value)
-                else:
-                    data[section] = {}
-            elif indent == 2 and section is not None:
-                data.setdefault(section, {})[key] = parse_value(value)
-    return data
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
 def reverse_map(capability_map):
@@ -82,9 +65,9 @@ def reverse_map(capability_map):
 
 
 def main():
-    default = parse_yaml(DEFAULT_PATH)
-    custom = parse_yaml(CUSTOM_PATH)
-    capability_map = parse_yaml(CAPABILITY_MAP_PATH)
+    default = load_yaml(DEFAULT_PATH)
+    custom = load_yaml(CUSTOM_PATH)
+    capability_map = load_yaml(CAPABILITY_MAP_PATH)
     scanner_to_cap = reverse_map(capability_map)
 
     capabilities = dict(default.get('capabilities', {}))
@@ -110,8 +93,13 @@ def main():
     print(json.dumps({'capabilities': capabilities}))
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
 PY
 }
 
@@ -123,7 +111,12 @@ is_capability_enabled() {
   load_merged_config_json "$workspace" "$config_file" | python3 - "$capability" <<'PY'
 import json
 import sys
-config = json.load(sys.stdin)
+
+if not raw.strip():
+    raise RuntimeError("load_merged_config_json produced no JSON output")
+
+config = json.loads(raw)
+
 capability = sys.argv[1]
 value = config.get('capabilities', {}).get(capability, False)
 if value:
@@ -142,7 +135,11 @@ import os
 import re
 import sys
 
-config = json.load(sys.stdin)
+
+if not raw.strip():
+    raise RuntimeError("load_merged_config_json produced no JSON output")
+
+config = json.loads(raw)
 capability_map_path = sys.argv[1]
 capability_map = {}
 with open(capability_map_path, 'r', encoding='utf-8') as f:
