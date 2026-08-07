@@ -4,10 +4,6 @@ on:
   push:
   workflow_call:
     inputs:
-      workspace:
-        type : string
-        required: false
-        default: ${{ github.workspace }}
       config-file:
         type : string
         required: false
@@ -25,7 +21,6 @@ jobs:
   bootstrap:
     runs-on: ubuntu-latest
     outputs:
-      workspace: ${{ steps.set-vars.outputs.workspace }}
       config-file: ${{ steps.set-vars.outputs.config-file }}
       report-directory: ${{ steps.set-vars.outputs.report-directory }}
       log-level: ${{ steps.set-vars.outputs.log-level }}
@@ -36,7 +31,6 @@ jobs:
       - name: Set required variables
         id: set-vars
         run: |
-          echo "workspace=${{ inputs.workspace }}" >> $GITHUB_OUTPUT
           echo "config-file=${{ inputs.config-file }}" >> $GITHUB_OUTPUT
           echo "report-directory=${{ inputs.report-directory }}" >> $GITHUB_OUTPUT
           echo "log-level=${{ inputs.log-level }}" >> $GITHUB_OUTPUT
@@ -45,14 +39,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: master
+          ref: ci-foundation
           path: platform
+
+      - name: Debug platform checkout
+        shell: bash
+        run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          echo "===== ROOT ====="
+          ls -la "$GITHUB_WORKSPACE"
+          echo "===== PLATFORM ====="
+          ls -la "$GITHUB_WORKSPACE/platform" || true
+          echo "===== PLATFORM/PLATFORM ====="
+          ls -la "$GITHUB_WORKSPACE/platform/platform" || true
+          echo "===== BOOTSTRAP ====="
+          ls -la "$GITHUB_WORKSPACE/platform/platform/bootstrap" || true
+          echo "===== FIND ====="
+          find "$GITHUB_WORKSPACE" -name bootstrap.sh
 
       - name: Bootstrap platform environment
         shell: bash
         run: |
           set -euo pipefail
-          export WORKSPACE="${{ inputs.workspace }}"
+          export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ inputs.config-file }}"
           export REPORT_DIR="${{ inputs.report-directory }}"
           export LOG_LEVEL="${{ inputs.log-level }}"
@@ -68,29 +77,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        
       - name: Checkout platform repository
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: master
+          ref: ci-foundation
           path: platform
-      - name: Debug platform checkout
-        run: |
-          echo "Platform checkout path: ${{ github.workspace }}/platform"
-          pwd
-          echo "===== Root ====="
-          ls -la
-          echo "===== Platform directory ====="
-          ls -la platform || true
-          echo "===== Tree ====="
-          find . -maxdepth 4
 
       - name: Install scanner tools
         shell: bash
         run: |
           set -euo pipefail
-          export WORKSPACE="${{ github.workspace }}"
+          export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
@@ -100,11 +99,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export WORKSPACE="${{ github.workspace }}"
+          export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
+          bash "${{ github.workspace }}/platform/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
 
   upload_reports:
     needs: scanners
@@ -114,7 +113,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Upload standardized reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: devsecops-reports
           path: .devsecops/reports
