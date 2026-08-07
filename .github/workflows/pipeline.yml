@@ -56,8 +56,8 @@ jobs:
           export CONFIG_FILE="${{ inputs.config-file }}"
           export REPORT_DIR="${{ inputs.report-directory }}"
           export LOG_LEVEL="${{ inputs.log-level }}"
-          bash "${{ github.workspace }}/platform/bootstrap/bootstrap.sh"
-          bash "${{ github.workspace }}/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ inputs.config-file }}"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/bootstrap.sh"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ inputs.config-file }}"
 
   scanners:
     needs: bootstrap
@@ -84,7 +84,7 @@ jobs:
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
 
       - name: Run scanner
         shell: bash
