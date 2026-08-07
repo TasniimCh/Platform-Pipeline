@@ -75,6 +75,16 @@ jobs:
           repository: TasniimCh/Platform-Pipeline
           ref: master
           path: platform
+      - name: Debug platform checkout
+        run: |
+          echo "Platform checkout path: ${{ github.workspace }}/platform"
+          pwd
+          echo "===== Root ====="
+          ls -la
+          echo "===== Platform directory ====="
+          ls -la platform || true
+          echo "===== Tree ====="
+          find . -maxdepth 4
 
       - name: Install scanner tools
         shell: bash
