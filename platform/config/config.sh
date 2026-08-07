@@ -112,6 +112,8 @@ is_capability_enabled() {
 import json
 import sys
 
+raw = sys.stdin.read()
+
 if not raw.strip():
     raise RuntimeError("load_merged_config_json produced no JSON output")
 
@@ -135,6 +137,7 @@ import os
 import re
 import sys
 
+raw = sys.stdin.read()
 
 if not raw.strip():
     raise RuntimeError("load_merged_config_json produced no JSON output")
