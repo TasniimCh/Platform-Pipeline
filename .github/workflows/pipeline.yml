@@ -1,19 +1,72 @@
 name: Platform Pipeline
 
 on:
+  push:
   workflow_call:
-
-env:
-  PLATFORM_PATH: platform
+    inputs:
+      workspace:
+        type : string
+        required: false
+        default: ${{ github.workspace }}
+      config-file:
+        type : string
+        required: false
+        default: .devsecops/pipeline.yaml
+      report-directory:
+        type : string
+        required: false
+        default: .devsecops/reports
+      log-level:
+        type : string
+        required: false
+        default: info
 
 jobs:
-
-  context:
+  bootstrap:
     runs-on: ubuntu-latest
-
+    outputs:
+      workspace: ${{ steps.set-vars.outputs.workspace }}
+      config-file: ${{ steps.set-vars.outputs.config-file }}
+      report-directory: ${{ steps.set-vars.outputs.report-directory }}
+      log-level: ${{ steps.set-vars.outputs.log-level }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Checkout consumer repository
+      - name: Set required variables
+        id: set-vars
+        run: |
+          echo "workspace=${{ inputs.workspace }}" >> $GITHUB_OUTPUT
+          echo "config-file=${{ inputs.config-file }}" >> $GITHUB_OUTPUT
+          echo "report-directory=${{ inputs.report-directory }}" >> $GITHUB_OUTPUT
+          echo "log-level=${{ inputs.log-level }}" >> $GITHUB_OUTPUT
+
+      - name: Checkout platform repository
+        uses: actions/checkout@v4
+        with:
+          repository: TasniimCh/Platform-Pipeline
+          ref: master
+          path: platform
+
+      - name: Bootstrap platform environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="${{ inputs.workspace }}"
+          export CONFIG_FILE="${{ inputs.config-file }}"
+          export REPORT_DIR="${{ inputs.report-directory }}"
+          export LOG_LEVEL="${{ inputs.log-level }}"
+          bash "${{ github.workspace }}/platform/bootstrap/bootstrap.sh"
+          bash "${{ github.workspace }}/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ inputs.config-file }}"
+
+  scanners:
+    needs: bootstrap
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        scanner: [gitleaks, semgrep, snyk, checkov]
+    steps:
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Checkout platform repository
@@ -21,27 +74,37 @@ jobs:
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: master
-          path: ${{ env.PLATFORM_PATH }}
+          path: platform
 
-      - name: Load Context
-        run: bash ${{ env.PLATFORM_PATH }}/scripts/load-context.sh
+      - name: Install scanner tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="${{ github.workspace }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
 
+      - name: Run scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="${{ github.workspace }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
 
-  phase1:
-    needs: context
+  upload_reports:
+    needs: scanners
     runs-on: ubuntu-latest
-
     steps:
-
-      - name: Checkout consumer repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - name: Upload standardized reports
+        uses: actions/upload-artifact@v4
         with:
-          repository: TasniimCh/Platform-Pipeline
-          ref: master
-          path: ${{ env.PLATFORM_PATH }}
-
-      - name: Run Phase 1
-        run: bash ${{ env.PLATFORM_PATH }}/scripts/phase1.sh
+          name: devsecops-reports
+          path: .devsecops/reports

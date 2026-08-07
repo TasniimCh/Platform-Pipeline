@@ -1,0 +1,5 @@
+capabilities:
+  secret_detection: true
+  static_analysis: true
+  dependency_analysis: true
+  infrastructure_analysis: true

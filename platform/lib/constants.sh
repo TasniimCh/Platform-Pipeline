@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Standard platform exit codes
+PLATFORM_EXIT_SUCCESS=0
+PLATFORM_EXIT_FAILURE=1
+PLATFORM_EXIT_CONFIG=2
+PLATFORM_EXIT_TOOL_MISSING=3
+PLATFORM_EXIT_FINDINGS=4
