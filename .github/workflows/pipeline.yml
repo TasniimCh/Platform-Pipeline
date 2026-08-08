@@ -42,21 +42,6 @@ jobs:
           ref: ci-foundation
           path: platform
 
-      - name: Debug platform checkout
-        shell: bash
-        run: |
-          echo "Workspace: $GITHUB_WORKSPACE"
-          echo "===== ROOT ====="
-          ls -la "$GITHUB_WORKSPACE"
-          echo "===== PLATFORM ====="
-          ls -la "$GITHUB_WORKSPACE/platform" || true
-          echo "===== PLATFORM/PLATFORM ====="
-          ls -la "$GITHUB_WORKSPACE/platform/platform" || true
-          echo "===== BOOTSTRAP ====="
-          ls -la "$GITHUB_WORKSPACE/platform/platform/bootstrap" || true
-          echo "===== FIND ====="
-          find "$GITHUB_WORKSPACE" -name bootstrap.sh
-
       - name: Bootstrap platform environment
         shell: bash
         run: |
@@ -104,16 +89,22 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
-
-  upload_reports:
-    needs: scanners
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Upload standardized reports
+      
+      - name: Upload scanner report
         uses: actions/upload-artifact@v3
         with:
-          name: devsecops-reports
+          name: report-${{ matrix.scanner }}
           path: .devsecops/reports
+          if-no-files-found: warn
+
+#  upload_reports:
+#    needs: scanners
+#    runs-on: ubuntu-latest 
+#    steps:
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+#      - name: Upload standardized reports
+#        uses: actions/upload-artifact@v3
+#        with:
+#          name: devsecops-reports
+#          path: .devsecops/reports
