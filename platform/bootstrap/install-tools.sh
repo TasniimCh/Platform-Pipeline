@@ -107,7 +107,6 @@ install_gitleaks() {
 
   local tmpdir
   tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' RETURN
 
   local version
   version="${GITLEAKS_VERSION#v}"
@@ -132,6 +131,8 @@ install_gitleaks() {
       printf 'PATH=%s\n' "$INSTALL_DIR:$PATH" >> "$GITHUB_ENV"
     fi
   fi
+
+  rm -rf "$tmpdir"
 }
 
 install_required_tools() {
