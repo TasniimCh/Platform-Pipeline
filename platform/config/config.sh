@@ -114,9 +114,13 @@ is_capability_enabled() {
   local capability="$1"
   local workspace="${2:-$WORKSPACE}"
   local config_file="${3:-$CONFIG_FILE}"
+  local config_json
 
-  load_merged_config_json "$workspace" "$config_file" | python3 - "$capability" <<'PY'
+  config_json=$(load_merged_config_json "$workspace" "$config_file")
+
+  CONFIG_JSON="$config_json" python3 - "$capability" <<'PY'
 import json
+import sys
 import sys
 
 raw = os.environ.get("CONFIG_JSON", "")
@@ -137,8 +141,11 @@ PY
 enabled_scanner_tools() {
   local workspace="${1:-$WORKSPACE}"
   local config_file="${2:-$CONFIG_FILE}"
+  local config_json
 
-  load_merged_config_json "$workspace" "$config_file" | python3 - "$CAPABILITY_MAP" <<'PY'
+  config_json=$(load_merged_config_json "$workspace" "$config_file")
+
+  CONFIG_JSON="$config_json" python3 - "$CAPABILITY_MAP" <<'PY'
 import json
 import os
 import re
