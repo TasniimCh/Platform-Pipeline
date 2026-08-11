@@ -8,7 +8,7 @@ source "$PLATFORM_ROOT/lib/constants.sh"
 source "$PLATFORM_ROOT/lib/logging.sh"
 source "$PLATFORM_ROOT/config/config.sh"
 
-GITLEAKS_VERSION="v8.19.0"
+GITLEAKS_VERSION="v8.24.2"
 INSTALL_DIR="/usr/local/bin"
 PIP_USER_BIN="${HOME}/.local/bin"
 
