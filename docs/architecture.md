@@ -86,3 +86,12 @@ V0
      │
      ▼
  Knowledge / Feedback Loop
+
+ | Code | Meaning               | Example                                       |
+| ---: | --------------------- | --------------------------------------------- |
+|  `0` | `SUCCESS`             | Scanner ran, no findings                      |
+|  `1` | `FAILURE`             | Unexpected/general platform failure           |
+|  `2` | `CONFIGURATION_ERROR` | Invalid/missing configuration                 |
+|  `3` | `DEPENDENCY_ERROR`    | Scanner/tool unavailable                      |
+|  `4` | `FINDINGS_DETECTED`   | Vulnerabilities/secrets detected              |
+|  `5` | `EXECUTION_ERROR`     | Scanner crashed / invalid CLI / runtime error |

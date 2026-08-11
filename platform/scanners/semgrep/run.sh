@@ -34,18 +34,39 @@ fi
 
 pushd "$WORKSPACE" >/dev/null
 
-if ! semgrep --config auto --json --output "$REPORT_FILE" .; then
-  EXIT_CODE=$PLATFORM_EXIT_FINDINGS
-  log_warn "Semgrep completed with findings"
-else
-  EXIT_CODE=$PLATFORM_EXIT_SUCCESS
-  log_info "Semgrep completed with no findings"
-fi
+set +e
+
+semgrep \
+  --config auto \
+  --json \
+  --output "$REPORT_FILE" \
+  .
+
+SEMGREP_EXIT_CODE=$?
+
+set -e
+
+case "$SEMGREP_EXIT_CODE" in
+  0)
+    EXIT_CODE=$PLATFORM_EXIT_SUCCESS
+    log_info "Semgrep completed with no findings"
+    ;;
+
+  1)
+    EXIT_CODE=$PLATFORM_EXIT_FINDINGS
+    log_warn "Semgrep completed with findings"
+    ;;
+
+  *)
+    EXIT_CODE=$PLATFORM_EXIT_EXECUTION
+    log_error "Semgrep execution failed with exit code $SEMGREP_EXIT_CODE"
+    ;;
+esac
 
 popd >/dev/null
 
 findings=$(count_json_findings "$REPORT_FILE")
-write_metadata "semgrep" "completed" "$findings" "$REPORT_FILE" "$SARIF_FILE"
+write_metadata "semgrep" "completed" "$findings" "$EXIT_CODE" "$REPORT_FILE" "$SARIF_FILE"
 
 if [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_SUCCESS" ]; then
   log_info "Semgrep finished successfully"

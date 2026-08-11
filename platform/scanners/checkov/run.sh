@@ -34,18 +34,38 @@ fi
 
 pushd "$WORKSPACE" >/dev/null
 
-if ! checkov -o json --output-file-path "$REPORT_FILE" .; then
-  EXIT_CODE=$PLATFORM_EXIT_FINDINGS
-  log_warn "Checkov completed with findings"
-else
-  EXIT_CODE=$PLATFORM_EXIT_SUCCESS
-  log_info "Checkov completed with no findings"
-fi
+set +e
+
+checkov \
+  -o json \
+  --output-file-path "$REPORT_FILE" \
+  .
+
+CHECKOV_EXIT_CODE=$?
+
+set -e
+
+case "$CHECKOV_EXIT_CODE" in
+  0)
+    EXIT_CODE=$PLATFORM_EXIT_SUCCESS
+    log_info "Checkov completed with no findings"
+    ;;
+
+  1)
+    EXIT_CODE=$PLATFORM_EXIT_FINDINGS
+    log_warn "Checkov completed with findings"
+    ;;
+
+  *)
+    EXIT_CODE=$PLATFORM_EXIT_EXECUTION
+    log_error "Checkov execution failed with exit code $CHECKOV_EXIT_CODE"
+    ;;
+esac
 
 popd >/dev/null
 
 findings=$(count_json_findings "$REPORT_FILE")
-write_metadata "checkov" "completed" "$findings" "$REPORT_FILE" "$SARIF_FILE"
+write_metadata "checkov" "completed" "$findings" "$EXIT_CODE" "$REPORT_FILE" "$SARIF_FILE"
 
 if [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_SUCCESS" ]; then
   log_info "Checkov finished successfully"

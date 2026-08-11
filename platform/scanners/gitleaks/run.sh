@@ -37,13 +37,32 @@ fi
 
 pushd "$WORKSPACE" >/dev/null
 
-if ! gitleaks detect --format json --report-path "$REPORT_FILE"; then
-  EXIT_CODE=$PLATFORM_EXIT_FINDINGS
-  log_warn "Gitleaks completed with findings"
-else
-  EXIT_CODE=$PLATFORM_EXIT_SUCCESS
-  log_info "Gitleaks completed with no findings"
-fi
+set +e
+
+gitleaks detect \
+  --report-format json \
+  --report-path "$REPORT_FILE"
+
+GITLEAKS_EXIT_CODE=$?
+
+set -e
+
+case "$GITLEAKS_EXIT_CODE" in
+  0)
+    EXIT_CODE=$PLATFORM_EXIT_SUCCESS
+    log_info "Gitleaks completed with no findings"
+    ;;
+
+  1)
+    EXIT_CODE=$PLATFORM_EXIT_FINDINGS
+    log_warn "Gitleaks completed with findings"
+    ;;
+
+  *)
+    EXIT_CODE=$PLATFORM_EXIT_EXECUTION
+    log_error "Gitleaks execution failed with exit code $GITLEAKS_EXIT_CODE"
+    ;;
+esac
 
 popd >/dev/null
 

@@ -97,16 +97,18 @@ PY
 }
 
 write_metadata() {
-  local scanner="$1"
-  local status="$2"
-  local findings="$3"
-  local report_path="$4"
-  local sarif_path="${5:-}"
+    local scanner="$1"
+    local status="$2"
+    local findings="$3"
+    local exit_code="$4"
+    local report_path="$5"
+    local sarif_path="${6:-}"
 
-  cat > "$RESULT_DIR/metadata.json" <<EOF
+    cat > "$RESULT_DIR/metadata.json" <<EOF
 {
   "scanner": "$scanner",
   "status": "$status",
+  "exit_code": $exit_code,
   "findings": $findings,
   "report": "$report_path",
   "sarif": "$sarif_path"

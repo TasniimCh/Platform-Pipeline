@@ -34,18 +34,35 @@ fi
 
 pushd "$WORKSPACE" >/dev/null
 
-if ! snyk test --json > "$REPORT_FILE" 2>/dev/null; then
-  EXIT_CODE=$PLATFORM_EXIT_FINDINGS
-  log_warn "Snyk completed with findings"
-else
-  EXIT_CODE=$PLATFORM_EXIT_SUCCESS
-  log_info "Snyk completed with no findings"
-fi
+set +e
+
+snyk test --json > "$REPORT_FILE" 2>/dev/null
+
+SNYK_EXIT_CODE=$?
+
+set -e
+
+case "$SNYK_EXIT_CODE" in
+  0)
+    EXIT_CODE=$PLATFORM_EXIT_SUCCESS
+    log_info "Snyk completed with no findings"
+    ;;
+
+  1)
+    EXIT_CODE=$PLATFORM_EXIT_FINDINGS
+    log_warn "Snyk completed with findings"
+    ;;
+
+  *)
+    EXIT_CODE=$PLATFORM_EXIT_EXECUTION
+    log_error "Snyk execution failed with exit code $SNYK_EXIT_CODE"
+    ;;
+esac
 
 popd >/dev/null
 
 findings=$(count_json_findings "$REPORT_FILE")
-write_metadata "snyk" "completed" "$findings" "$REPORT_FILE" "$SARIF_FILE"
+write_metadata "snyk" "completed" "$findings" "$EXIT_CODE" "$REPORT_FILE" "$SARIF_FILE"
 
 if [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_SUCCESS" ]; then
   log_info "Snyk finished successfully"
