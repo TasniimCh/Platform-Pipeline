@@ -91,7 +91,7 @@ jobs:
           bash "${{ github.workspace }}/platform/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
       
       - name: Upload scanner report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: report-${{ matrix.scanner }}
           path: .devsecops/reports
