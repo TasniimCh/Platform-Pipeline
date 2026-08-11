@@ -39,9 +39,10 @@ pushd "$WORKSPACE" >/dev/null
 
 set +e
 
-gitleaks detect \
+gitleaks git \
   --report-format json \
-  --report-path "$REPORT_FILE"
+  --report-path "$REPORT_FILE" \
+  .
 
 GITLEAKS_EXIT_CODE=$?
 
