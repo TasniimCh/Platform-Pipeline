@@ -39,10 +39,9 @@ pushd "$WORKSPACE" >/dev/null
 
 set +e
 
-gitleaks git \
+gitleaks detect \
   --report-format json \
-  --report-path "$REPORT_FILE" \
-  .
+  --report-path "$REPORT_FILE"
 
 GITLEAKS_EXIT_CODE=$?
 
@@ -70,7 +69,7 @@ popd >/dev/null
 findings=0
 if [ -f "$REPORT_FILE" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    findings=$(python3 - <<PYTHON
+    findings=$(python3 - <<'PYTHON'
 import json
 import sys
 try:
@@ -87,7 +86,7 @@ fi
 
 SARIF_FILE="$RESULT_DIR/report.sarif"
 if command -v python3 >/dev/null 2>&1 && [ -f "$REPORT_FILE" ]; then
-  python3 - <<PYTHON
+  python3 - <<'PYTHON'
 import json
 from pathlib import Path
 report_path = Path("$REPORT_FILE")
