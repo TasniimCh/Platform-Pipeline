@@ -36,7 +36,9 @@ pushd "$WORKSPACE" >/dev/null
 
 set +e
 
-snyk test --json > "$REPORT_FILE" 2> "$RESULT_DIR/error.log"
+snyk test --json \
+  > "$REPORT_FILE" \
+  2> "$RESULT_DIR/error.log"
 
 SNYK_EXIT_CODE=$?
 
@@ -54,9 +56,13 @@ case "$SNYK_EXIT_CODE" in
     ;;
 
   *)
-    EXIT_CODE=$PLATFORM_EXIT_EXECUTION
-    log_error "Snyk execution failed with exit code $SNYK_EXIT_CODE"
-    ;;
+  EXIT_CODE=$PLATFORM_EXIT_EXECUTION
+  log_error "Snyk execution failed with exit code $SNYK_EXIT_CODE"
+
+  if [ -f "$RESULT_DIR/error.log" ]; then
+    cat "$RESULT_DIR/error.log" >&2
+  fi
+  ;;
 esac
 
 popd >/dev/null
