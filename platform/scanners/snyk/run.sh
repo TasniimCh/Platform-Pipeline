@@ -36,7 +36,7 @@ pushd "$WORKSPACE" >/dev/null
 
 set +e
 
-snyk test --json > "$REPORT_FILE" 2>/dev/null
+snyk test --json > "$REPORT_FILE" 2> "$RESULT_DIR/error.log"
 
 SNYK_EXIT_CODE=$?
 
