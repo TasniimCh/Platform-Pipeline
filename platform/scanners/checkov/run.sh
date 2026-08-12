@@ -37,9 +37,9 @@ pushd "$WORKSPACE" >/dev/null
 set +e
 
 checkov \
+  -d "$WORKSPACE" \
   -o json \
-  --output-file-path "$REPORT_FILE" \
-  .
+  --output-file-path "$REPORT_FILE"
 
 CHECKOV_EXIT_CODE=$?
 
