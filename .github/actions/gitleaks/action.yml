@@ -1,0 +1,42 @@
+name: Gitleaks Scanner
+description: Runs the platform Gitleaks scanner and writes standardized reports.
+inputs:
+  workspace:
+    description: Consumer workspace root directory.
+    required: true
+  config-file:
+    description: Path to the platform configuration file, relative to workspace.
+    required: false
+    default: .devsecops/pipeline.yaml
+  report-directory:
+    description: Report output directory, relative to workspace.
+    required: false
+    default: .devsecops/reports
+  log-level:
+    description: Log level for the scanner.
+    required: false
+    default: info
+runs:
+  using: "composite"
+  steps:
+    - name: Set up environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "WORKSPACE=${{ inputs.workspace }}" >> $GITHUB_ENV
+        echo "CONFIG_FILE=${{ inputs.config-file }}" >> $GITHUB_ENV
+        echo "REPORT_DIR=${{ inputs.report-directory }}" >> $GITHUB_ENV
+        echo "LOG_LEVEL=${{ inputs.log-level }}" >> $GITHUB_ENV
+    - name: Run Gitleaks scanner
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "WORKSPACE=${{ inputs.workspace }}" >> $GITHUB_ENV
+        echo "CONFIG_FILE=${{ inputs.config-file }}" >> $GITHUB_ENV
+        echo "REPORT_DIR=${{ inputs.report-directory }}" >> $GITHUB_ENV
+        echo "LOG_LEVEL=${{ inputs.log-level }}" >> $GITHUB_ENV
+        bash "$GITHUB_ACTION_PATH/../../../platform/scanners/run-scanner.sh" gitleaks
+outputs:
+  report-directory:
+    description: Path to the generated report directory relative to workspace.
+    value: ${{ inputs.report-directory }}

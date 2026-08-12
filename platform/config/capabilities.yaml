@@ -1,0 +1,5 @@
+capabilities:
+  secret_detection: gitleaks
+  static_analysis: semgrep
+  dependency_analysis: snyk
+  infrastructure_analysis: checkov
