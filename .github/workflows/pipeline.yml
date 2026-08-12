@@ -90,6 +90,20 @@ jobs:
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/build-test/run.sh"
 
+      - name: Upload Build & Test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-test-reports
+          path: .devsecops/reports/build
+          if-no-files-found: warn
+
+      - name: Upload Test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: .devsecops/reports/tests
+          if-no-files-found: warn
+
   supply_chain:
     needs: [bootstrap, build_test]
     runs-on: ubuntu-latest
@@ -123,6 +137,12 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/container/run.sh"
+      - name: Upload container reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-supply-chain-reports
+          path: .devsecops/reports/container
+          if-no-files-found: warn
 
   scanners:
     needs: [bootstrap, build_test, supply_chain]
