@@ -28,7 +28,7 @@ log_info "Reports: $RESULT_BASE"
 
 config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE")
 
-python3 - "$config_json" "$WORKSPACE" "$RESULT_BASE" <<'PY'
+python3 - "$config_json" "$WORKSPACE" "$RESULT_BASE" <<'PYTHON'
 import json, os, subprocess, sys, time
 from datetime import datetime
 
