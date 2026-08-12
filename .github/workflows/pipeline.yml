@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: ci-foundation
+          ref: supply-chain
           path: platform
 
       - name: Bootstrap platform environment
@@ -67,7 +67,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: ci-foundation
+          ref: supply-chain
           path: platform
 
       - name: Install required tools
@@ -108,7 +108,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: ci-foundation
+          ref: supply-chain
           path: platform
 
       - name: Install scanner tools
