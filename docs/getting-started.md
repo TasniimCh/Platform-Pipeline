@@ -136,6 +136,13 @@ After a workflow run, the platform writes standardized reports into:
 
 The workflow uploads the entire `.devsecops/reports` directory as an artifact named `devsecops-reports`.
 
+Container and supply-chain evidence is written under:
+
+```
+.devsecops/reports/container/<image-id-or-digest>/
+```
+Each image-specific folder contains `report.json` and `metadata.json`, plus tool-native outputs such as `trivy` or `sbom` files.
+
 ## Platform Contract
 
 The platform contract is documented in `docs/PlatformContract.md`.

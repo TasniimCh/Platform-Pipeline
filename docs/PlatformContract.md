@@ -93,6 +93,10 @@ capabilities:
   build: false
   unit_testing: false
   integration_testing: false
+  container_build: false
+  container_scan: false
+  sbom: false
+  provenance: false
 
 build:
   working_directory: .
@@ -110,6 +114,16 @@ testing:
   integration:
     enabled: false
     command: null
+
+container:
+  dockerfile: ./Dockerfile
+  context: .
+  image:
+    name: application
+    tag: null
+  registry:
+    type: dockerhub
+    repository: null
 ```
 
 For compatibility, the platform also accepts legacy scanner-specific configuration under `scanners:`.

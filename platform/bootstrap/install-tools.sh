@@ -82,6 +82,34 @@ install_npm_package() {
   return 1
 }
 
+install_trivy() {
+  if command -v trivy >/dev/null 2>&1; then
+    log_info "trivy is already installed"
+    return 0
+  fi
+  log_info "Installing trivy"
+  if curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$INSTALL_DIR" ; then
+    log_info "Installed trivy to $INSTALL_DIR"
+    return 0
+  fi
+  log_warn "Automatic trivy install failed"
+  return 1
+}
+
+install_syft() {
+  if command -v syft >/dev/null 2>&1; then
+    log_info "syft is already installed"
+    return 0
+  fi
+  log_info "Installing syft"
+  if curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$INSTALL_DIR" ; then
+    log_info "Installed syft to $INSTALL_DIR"
+    return 0
+  fi
+  log_warn "Automatic syft install failed"
+  return 1
+}
+
 install_node_package_manager() {
   local manager="$1"
   case "$manager" in
@@ -190,31 +218,17 @@ install_required_tools() {
     log_warn "No enabled scanners determined from capabilities; nothing to install"
   fi
 
+  # Install container/supply-chain tools if container capabilities are enabled
   if [ -f "$config_path" ]; then
-    local package_manager
-    package_manager=$(python3 - "$config_path" <<'PY'
-import json, yaml, sys
-path = sys.argv[1]
-with open(path, 'r', encoding='utf-8') as f:
-    config = yaml.safe_load(f) or {}
-if config.get('capabilities', {}).get('build'):
-    runtime = config.get('build', {}).get('runtime', {})
-    pm = runtime.get('package_manager')
-    if pm:
-        print(pm)
-PY
-)
-    if [ -n "$package_manager" ]; then
-      case "$package_manager" in
-        yarn|pnpm)
-          install_node_package_manager "$package_manager"
-          ;;
-        npm)
-          ;;
-        *)
-          log_warn "Configured package manager '$package_manager' is not supported for automatic installation"
-          ;;
-      esac
+    local merged
+    merged=$(load_merged_config_json "$workspace" "$config_path") || merged=""
+    if [ -n "$merged" ]; then
+      local has_container
+      has_container=$(CONFIG_JSON="$merged" python3 -c "import os,json; cfg=json.loads(os.environ.get('CONFIG_JSON','{}')); caps=cfg.get('capabilities',{}); print('yes' if (caps.get('container_build') or caps.get('container_scan') or caps.get('sbom') or caps.get('provenance')) else '')")
+      if [ "$has_container" = "yes" ]; then
+        install_trivy || log_warn "trivy install failed"
+        install_syft || log_warn "syft install failed"
+      fi
     fi
   fi
 }
