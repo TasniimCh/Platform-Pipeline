@@ -22,7 +22,7 @@ if ! grep -E '^[[:space:]]*scanners:|^[[:space:]]*capabilities:' "$CONFIG_PATH" 
 fi
 
 if grep -E '^[[:space:]]*capabilities:' "$CONFIG_PATH" >/dev/null 2>&1; then
-  if ! grep -E '^[[:space:]]{2}(secret_detection|static_analysis|dependency_analysis|infrastructure_analysis):' "$CONFIG_PATH" >/dev/null 2>&1; then
+  if ! grep -E '^[[:space:]]{2}(secret_detection|static_analysis|dependency_analysis|infrastructure_analysis|build|unit_testing|integration_testing):' "$CONFIG_PATH" >/dev/null 2>&1; then
     printf 'Configuration validation failed: "capabilities" section must contain at least one supported capability\n' >&2
     exit 2
   fi

@@ -82,6 +82,19 @@ install_npm_package() {
   return 1
 }
 
+install_node_package_manager() {
+  local manager="$1"
+  case "$manager" in
+    yarn|pnpm)
+      install_npm_package "$manager"
+      ;;
+    *)
+      log_warn "Unsupported package manager for installation: $manager"
+      return 1
+      ;;
+  esac
+}
+
 download_file() {
   local url="$1"
   local destination="$2"
@@ -150,34 +163,60 @@ install_required_tools() {
 
   install_python_package pyyaml
 
-
   local scanners
   scanners=$(enabled_scanner_tools "$workspace" "$config_path")
 
-  if [ -z "$scanners" ]; then
+  if [ -n "$scanners" ]; then
+    for scanner in $scanners; do
+      case "$scanner" in
+        gitleaks)
+          install_gitleaks
+          ;;
+        semgrep)
+          install_python_package semgrep
+          ;;
+        snyk)
+          install_npm_package snyk
+          ;;
+        checkov)
+          install_python_package checkov
+          ;;
+        *)
+          log_warn "No installer implemented for scanner '$scanner'"
+          ;;
+      esac
+    done
+  else
     log_warn "No enabled scanners determined from capabilities; nothing to install"
-    return 0
   fi
 
-  for scanner in $scanners; do
-    case "$scanner" in
-      gitleaks)
-        install_gitleaks
-        ;;
-      semgrep)
-        install_python_package semgrep
-        ;;
-      snyk)
-        install_npm_package snyk
-        ;;
-      checkov)
-        install_python_package checkov
-        ;;
-      *)
-        log_warn "No installer implemented for scanner '$scanner'"
-        ;;
-    esac
-  done
+  if [ -f "$config_path" ]; then
+    local package_manager
+    package_manager=$(python3 - "$config_path" <<'PY'
+import json, yaml, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f) or {}
+if config.get('capabilities', {}).get('build'):
+    runtime = config.get('build', {}).get('runtime', {})
+    pm = runtime.get('package_manager')
+    if pm:
+        print(pm)
+PY
+)
+    if [ -n "$package_manager" ]; then
+      case "$package_manager" in
+        yarn|pnpm)
+          install_node_package_manager "$package_manager"
+          ;;
+        npm)
+          ;;
+        *)
+          log_warn "Configured package manager '$package_manager' is not supported for automatic installation"
+          ;;
+      esac
+    fi
+  fi
 }
 
 main() {

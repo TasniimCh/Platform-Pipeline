@@ -90,6 +90,26 @@ capabilities:
   static_analysis: true
   dependency_analysis: true
   infrastructure_analysis: true
+  build: false
+  unit_testing: false
+  integration_testing: false
+
+build:
+  working_directory: .
+  runtime:
+    language: node
+    version: "22"
+    package_manager: null
+  command: null
+
+testing:
+  working_directory: .
+  unit:
+    enabled: true
+    command: null
+  integration:
+    enabled: false
+    command: null
 ```
 
 For compatibility, the platform also accepts legacy scanner-specific configuration under `scanners:`.

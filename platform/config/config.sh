@@ -26,7 +26,6 @@ load_merged_config_json() {
   python3 - "$DEFAULT_CONFIG" "$custom_config" "$CAPABILITY_MAP" <<'PY'
 import json
 import os
-import re
 import sys
 import yaml
 
@@ -35,26 +34,21 @@ CUSTOM_PATH = sys.argv[2]
 CAPABILITY_MAP_PATH = sys.argv[3]
 
 
-def parse_value(raw):
-    if isinstance(raw, str):
-        text = raw.strip()
-        if text.lower() in ('true', 'yes', '1'):
-            return True
-        if text.lower() in ('false', 'no', '0'):
-            return False
-        if text == '[]':
-            return []
-        return text
-    return raw
-
-
-
 def load_yaml(path):
     if not os.path.isfile(path):
         return {}
-
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f) or {}
+
+
+def merge_dict(a, b):
+    result = dict(a)
+    for key, value in b.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_dict(result.get(key, {}), value)
+        else:
+            result[key] = value
+    return result
 
 
 def reverse_map(capability_map):
@@ -65,21 +59,16 @@ def reverse_map(capability_map):
 
 
 def main():
-    print("Loading default...", file=sys.stderr) 
     default = load_yaml(DEFAULT_PATH)
-    print("Loading custom...", file=sys.stderr)
     custom = load_yaml(CUSTOM_PATH)
-    print("Loading capability map...", file=sys.stderr)
     capability_map = load_yaml(CAPABILITY_MAP_PATH)
-    
-    print(default, file=sys.stderr)
-    print(custom, file=sys.stderr)
-    print(capability_map, file=sys.stderr)
-    scanner_to_cap = reverse_map(capability_map)
 
-    capabilities = dict(default.get('capabilities', {}))
+    merged = merge_dict(default, custom)
+    merged_capabilities = dict(default.get('capabilities', {}))
+    merged_capabilities.update(merged.get('capabilities', {}))
 
     if 'scanners' in custom:
+        scanner_to_cap = reverse_map(capability_map)
         for scanner, scanner_config in custom['scanners'].items():
             if not isinstance(scanner_config, dict):
                 continue
@@ -88,19 +77,16 @@ def main():
                 continue
             capability = scanner_to_cap.get(scanner)
             if capability:
-                capabilities[capability] = enabled
-
-    if 'capabilities' in custom:
-        for capability, value in custom['capabilities'].items():
-            capabilities[capability] = value
+                merged_capabilities[capability] = enabled
 
     for capability in default.get('capabilities', {}).keys():
-        capabilities.setdefault(capability, False)
+        merged_capabilities.setdefault(capability, False)
 
-    print(json.dumps({'capabilities': capabilities}))
+    merged['capabilities'] = merged_capabilities
+    print(json.dumps(merged))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         main()
     except Exception:
