@@ -22,6 +22,9 @@ RESULT_BASE="$WORKSPACE/$REPORT_DIR/container"
 mkdir -p "$RESULT_BASE"
 
 log_info "Starting Container & Supply-Chain provider"
+log_info "Workspace: $WORKSPACE"
+log_info "Configuration: $WORKSPACE/$CONFIG_FILE"
+log_info "Reports: $RESULT_BASE"
 
 config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE")
 
