@@ -91,7 +91,7 @@ jobs:
           bash "${{ github.workspace }}/platform/platform/build-test/run.sh"
 
   supply_chain:
-    needs: build_test
+    needs: [bootstrap, build_test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
