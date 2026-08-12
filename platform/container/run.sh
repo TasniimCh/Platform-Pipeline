@@ -132,7 +132,7 @@ with open(os.path.join(result_dir, 'metadata.json'), 'w', encoding='utf-8') as f
 
 print('Container supply-chain evidence generated at', result_dir)
 sys.exit(0)
-PY
+PYTHON
 
 EXIT_CODE=$?
 if [ "$EXIT_CODE" -eq 0 ]; then
