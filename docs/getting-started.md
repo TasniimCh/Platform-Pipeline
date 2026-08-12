@@ -44,7 +44,34 @@ jobs:
       config-file: .devsecops/pipeline.yaml
       report-directory: .devsecops/reports
       log-level: info
+    secrets: inherit
 ```
+
+## Configure the Snyk Token
+
+The platform uses Snyk for dependency analysis.
+
+If Snyk is enabled, the client repository must provide a SNYK_TOKEN GitHub Actions secret.
+
+1. Get the Snyk token
+
+Create or retrieve an API token from your Snyk account under:
+
+Account Settings → API Token
+
+If Snyk is already authenticated locally, the token can also be retrieved with:
+
+snyk config get api
+2. Store the token in GitHub
+
+In the client repository:
+
+Settings → Secrets and variables → Actions → New repository secret
+
+Create:
+
+Name: SNYK_TOKEN
+Value: <your Snyk API token>
 
 ## Optional `.devsecops/pipeline.yaml`
 

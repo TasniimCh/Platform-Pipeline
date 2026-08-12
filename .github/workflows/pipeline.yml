@@ -3,6 +3,9 @@ name: Platform Pipeline
 on:
   push:
   workflow_call:
+    secrets:
+      SNYK_TOKEN:
+        required: true
     inputs:
       config-file:
         type : string
@@ -56,6 +59,10 @@ jobs:
   scanners:
     needs: bootstrap
     runs-on: ubuntu-latest
+
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
     strategy:
       matrix:
         scanner: [gitleaks, semgrep, snyk, checkov]

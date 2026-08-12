@@ -58,15 +58,24 @@ jobs:
       config-file: .devsecops/pipeline.yaml
       report-directory: .devsecops/reports
       log-level: info
+    secrets: inherit
 ```
 
 The `uses:` reference should point to the platform repository and the branch, tag, or ref to execute.
 
+secrets: inherit allows the reusable workflow to access the client repository's GitHub Actions secrets.
+
 ## Required GitHub Secrets
 
-This platform currently does not require secrets for the static analysis scan.
-Future scanners or integrations may require secrets, and those will be documented
-here when added.
+The platform currently requires the following secret:
+
+| Secret | Required | Used by | Description |
+|---|---|---|---|
+| `SNYK_TOKEN` | Yes* | Snyk | Snyk API authentication token |
+
+\* `SNYK_TOKEN` is required by the current reusable workflow contract. It must be configured in the client repository under **Settings → Secrets and variables → Actions**.
+
+The token must not be committed to the repository or stored in `.devsecops/pipeline.yaml`.
 
 ## `pipeline.yaml` Schema
 
@@ -109,6 +118,21 @@ The full report contract is:
 ```
 
 The platform also uploads `.devsecops/reports` as a workflow artifact named `devsecops-reports`.
+
+## Exit Code Contract
+
+Scanner modules use standardized platform exit codes:
+
+| Code | Constant | Meaning |
+|---:|---|---|
+| 0 | `PLATFORM_EXIT_SUCCESS` | Scan completed successfully with no findings |
+| 1 | `PLATFORM_EXIT_FAILURE` | Generic platform failure |
+| 2 | `PLATFORM_EXIT_CONFIG` | Configuration error |
+| 3 | `PLATFORM_EXIT_TOOL_MISSING` | Required scanner tool is unavailable |
+| 4 | `PLATFORM_EXIT_FINDINGS` | Security findings detected |
+| 5 | `PLATFORM_EXIT_EXECUTION` | Scanner execution failed |
+
+Scanner-specific native exit codes must be translated into these platform-level exit codes before being returned by the scanner module.
 
 ## Compatibility Guarantees
 
