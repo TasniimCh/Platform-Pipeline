@@ -37,24 +37,29 @@ CAPABILITY_MAP_PATH = sys.argv[3]
 def load_yaml(path):
     if not os.path.isfile(path):
         return {}
-    with open(path, 'r', encoding='utf-8') as f:
+
+    with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
 def merge_dict(a, b):
     result = dict(a)
+
     for key, value in b.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = merge_dict(result.get(key, {}), value)
+            result[key] = merge_dict(result[key], value)
         else:
             result[key] = value
+
     return result
 
 
 def reverse_map(capability_map):
     scanner_to_cap = {}
-    for capability, scanner in capability_map.get('capabilities', {}).items():
+
+    for capability, scanner in capability_map.get("capabilities", {}).items():
         scanner_to_cap[str(scanner)] = capability
+
     return scanner_to_cap
 
 
@@ -64,29 +69,40 @@ def main():
     capability_map = load_yaml(CAPABILITY_MAP_PATH)
 
     merged = merge_dict(default, custom)
-    merged_capabilities = dict(default.get('capabilities', {}))
-    merged_capabilities.update(merged.get('capabilities', {}))
 
-    if 'scanners' in custom:
+    merged_capabilities = dict(default.get("capabilities", {}))
+    merged_capabilities.update(
+        merged.get("capabilities", {})
+    )
+
+    # Preserve existing scanner -> capability compatibility.
+    if "scanners" in custom:
         scanner_to_cap = reverse_map(capability_map)
-        for scanner, scanner_config in custom['scanners'].items():
+
+        for scanner, scanner_config in custom["scanners"].items():
             if not isinstance(scanner_config, dict):
                 continue
-            enabled = scanner_config.get('enabled')
+
+            enabled = scanner_config.get("enabled")
+
             if enabled is None:
                 continue
+
             capability = scanner_to_cap.get(scanner)
+
             if capability:
                 merged_capabilities[capability] = enabled
 
-    for capability in default.get('capabilities', {}).keys():
+    # Ensure every platform capability has a boolean default.
+    for capability in default.get("capabilities", {}).keys():
         merged_capabilities.setdefault(capability, False)
 
-    merged['capabilities'] = merged_capabilities
+    merged["capabilities"] = merged_capabilities
+
     print(json.dumps(merged))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         main()
     except Exception:
@@ -95,6 +111,7 @@ if __name__ == '__main__':
         raise
 PY
 }
+
 
 is_capability_enabled() {
   local capability="$1"
@@ -106,23 +123,31 @@ is_capability_enabled() {
 
   CONFIG_JSON="$config_json" python3 - "$capability" <<'PY'
 import json
-import sys
+import os
 import sys
 
 raw = os.environ.get("CONFIG_JSON", "")
 
 if not raw.strip():
-    raise RuntimeError("load_merged_config_json produced no JSON output")
+    raise RuntimeError(
+        "load_merged_config_json produced no JSON output"
+    )
 
 config = json.loads(raw)
 
 capability = sys.argv[1]
-value = config.get('capabilities', {}).get(capability, False)
+value = config.get("capabilities", {}).get(
+    capability,
+    False
+)
+
 if value:
     sys.exit(0)
+
 sys.exit(1)
 PY
 }
+
 
 enabled_scanner_tools() {
   local workspace="${1:-$WORKSPACE}"
@@ -140,36 +165,57 @@ import sys
 raw = os.environ.get("CONFIG_JSON", "")
 
 if not raw.strip():
-    raise RuntimeError("load_merged_config_json produced no JSON output")
+    raise RuntimeError(
+        "load_merged_config_json produced no JSON output"
+    )
 
 config = json.loads(raw)
+
 capability_map_path = sys.argv[1]
 capability_map = {}
-with open(capability_map_path, 'r', encoding='utf-8') as f:
+
+with open(capability_map_path, "r", encoding="utf-8") as f:
     section = None
+
     for line in f:
-        line = line.split('#', 1)[0].rstrip()
+        line = line.split("#", 1)[0].rstrip()
+
         if not line:
             continue
-        m = re.match(r'^(\s*)([^:]+):\s*(.*)$', line)
-        if not m:
+
+        match = re.match(
+            r"^(\s*)([^:]+):\s*(.*)$",
+            line
+        )
+
+        if not match:
             continue
-        indent = len(m.group(1))
-        key = m.group(2).strip()
-        value = m.group(3).strip()
+
+        indent = len(match.group(1))
+        key = match.group(2).strip()
+        value = match.group(3).strip()
+
         if indent == 0:
             section = key
             continue
-        elif indent == 2 and section == 'capabilities':
+
+        if indent == 2 and section == "capabilities":
             capability_map[key] = value
 
+
 enabled = []
+
 for capability, tool in capability_map.items():
-    if config.get('capabilities', {}).get(capability, False):
+    if config.get("capabilities", {}).get(
+        capability,
+        False
+    ):
         enabled.append(tool)
-print(' '.join(enabled))
+
+print(" ".join(enabled))
 PY
 }
+
 
 is_scanner_enabled() {
   local scanner="$1"
@@ -184,5 +230,6 @@ is_scanner_enabled() {
       return 0
     fi
   done
+
   return 1
 }

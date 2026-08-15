@@ -97,6 +97,7 @@ capabilities:
   container_scan: false
   sbom: false
   provenance: false
+  policy_enforcement: false
 
 build:
   working_directory: .
@@ -124,6 +125,9 @@ container:
   registry:
     type: dockerhub
     repository: null
+policy:
+  paths: []
+  policy_paths: []
 ```
 
 For compatibility, the platform also accepts legacy scanner-specific configuration under `scanners:`.

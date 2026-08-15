@@ -9,6 +9,7 @@ source "$PLATFORM_ROOT/lib/logging.sh"
 source "$PLATFORM_ROOT/config/config.sh"
 
 GITLEAKS_VERSION="v8.24.2"
+CONFTEST_VERSION="v0.64.0"
 INSTALL_DIR="/usr/local/bin"
 PIP_USER_BIN="${HOME}/.local/bin"
 
@@ -176,12 +177,74 @@ install_gitleaks() {
   rm -rf "$tmpdir"
 }
 
+install_conftest() {
+  if command -v conftest >/dev/null 2>&1; then
+    log_info "conftest is already installed"
+    return 0
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  local version
+  version="${CONFTEST_VERSION#v}"
+
+  local archive
+  archive="conftest_${version}_Linux_x86_64.tar.gz"
+
+  local url
+  url="https://github.com/open-policy-agent/conftest/releases/download/${CONFTEST_VERSION}/${archive}"
+
+  log_info "Installing conftest ${CONFTEST_VERSION} from $url"
+
+  if ! download_file "$url" "$tmpdir/$archive"; then
+    rm -rf "$tmpdir"
+    log_error "Failed to download conftest ${CONFTEST_VERSION}"
+    return 1
+  fi
+
+  if ! tar -xzf "$tmpdir/$archive" -C "$tmpdir"; then
+    rm -rf "$tmpdir"
+    log_error "Failed to extract conftest ${CONFTEST_VERSION}"
+    return 1
+  fi
+
+  if install -m 0755 "$tmpdir/conftest" "$INSTALL_DIR/conftest" 2>/dev/null; then
+    log_info "Installed conftest to $INSTALL_DIR/conftest"
+  else
+    local user_install_dir="${HOME}/.local/bin"
+
+    mkdir -p "$user_install_dir"
+    install -m 0755 "$tmpdir/conftest" "$user_install_dir/conftest"
+
+    export PATH="$user_install_dir:$PATH"
+
+    if [ -n "${GITHUB_ENV:-}" ]; then
+      printf 'PATH=%s\n' "$user_install_dir:$PATH" >> "$GITHUB_ENV"
+    fi
+
+    log_info "Installed conftest to $user_install_dir/conftest"
+  fi
+
+  rm -rf "$tmpdir"
+
+  if ! command -v conftest >/dev/null 2>&1; then
+    log_error "Conftest installation completed but executable is not available"
+    return 1
+  fi
+
+  log_info "Conftest version: $(conftest --version)"
+
+  return 0
+}
+
 install_required_tools() {
   local config_path="$1"
   local workspace="${WORKSPACE:-$PWD}"
 
   if [ -z "$config_path" ] || [ ! -f "$config_path" ]; then
-    if [ "$config_path" = "$workspace/.devsecops/pipeline.yaml" ] || [ "$config_path" = ".devsecops/pipeline.yaml" ]; then
+    if [ "$config_path" = "$workspace/.devsecops/pipeline.yaml" ] || \
+       [ "$config_path" = ".devsecops/pipeline.yaml" ]; then
       log_warn "No client configuration found at '$config_path'; using platform defaults"
     else
       log_error "Configuration file '$config_path' does not exist"
@@ -218,18 +281,65 @@ install_required_tools() {
     log_warn "No enabled scanners determined from capabilities; nothing to install"
   fi
 
-  # Install container/supply-chain tools if container capabilities are enabled
-  if [ -f "$config_path" ]; then
-    local merged
-    merged=$(load_merged_config_json "$workspace" "$config_path") || merged=""
-    if [ -n "$merged" ]; then
-      local has_container
-      has_container=$(CONFIG_JSON="$merged" python3 -c "import os,json; cfg=json.loads(os.environ.get('CONFIG_JSON','{}')); caps=cfg.get('capabilities',{}); print('yes' if (caps.get('container_build') or caps.get('container_scan') or caps.get('sbom') or caps.get('provenance')) else '')")
-      if [ "$has_container" = "yes" ]; then
-        install_trivy || log_warn "trivy install failed"
-        install_syft || log_warn "syft install failed"
-      fi
-    fi
+  # Load normalized platform configuration once.
+  local merged
+  merged=$(load_merged_config_json "$workspace" "$config_path") || {
+    log_error "Failed to load merged platform configuration"
+    exit "$PLATFORM_EXIT_CONFIG"
+  }
+
+  # Install Conftest when CI policy testing is enabled.
+  local policy_enabled
+  policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
+import json
+import os
+
+config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
+
+enabled = config.get("capabilities", {}).get(
+    "policy_enforcement",
+    False
+)
+
+print("yes" if enabled else "")
+PY
+)
+
+  if [ "$policy_enabled" = "yes" ]; then
+    log_info "Policy enforcement enabled; installing conftest"
+
+    install_conftest || {
+      log_error "Conftest installation failed"
+      exit "$PLATFORM_EXIT_FAILURE"
+    }
+  else
+    log_debug "Policy enforcement disabled; skipping conftest installation"
+  fi
+
+  # Install container/supply-chain tools if enabled.
+  local has_container
+  has_container=$(CONFIG_JSON="$merged" python3 -c "
+import os
+import json
+
+cfg = json.loads(os.environ.get('CONFIG_JSON', '{}'))
+caps = cfg.get('capabilities', {})
+
+print(
+    'yes'
+    if (
+        caps.get('container_build')
+        or caps.get('container_scan')
+        or caps.get('sbom')
+        or caps.get('provenance')
+    )
+    else ''
+)
+")
+
+  if [ "$has_container" = "yes" ]; then
+    install_trivy || log_warn "trivy install failed"
+    install_syft || log_warn "syft install failed"
   fi
 }
 

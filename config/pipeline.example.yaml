@@ -6,6 +6,7 @@ capabilities:
   build: false
   unit_testing: false
   integration_testing: false
+  policy_enforcement: false
 
 build:
   working_directory: .
@@ -33,3 +34,9 @@ container:
   registry:
     type: dockerhub
     repository: null
+
+policy:
+  paths:
+    - deploy/
+  policy_paths:
+    - .devsecops/policies/
