@@ -516,9 +516,15 @@ conftest test \
   --policy "$POLICY_DIR" \
   --output json \
   "$MANIFEST_DIR" \
-  > "$RAW_REPORT" 2>&1
+  > "$RAW_REPORT" \
+  2> "$RESULT_BASE/conftest.stderr.log"
 
 conftest_status=$?
+
+if [ -s "$RESULT_BASE/conftest.stderr.log" ]; then
+  log_debug "Conftest stderr output:"
+  cat "$RESULT_BASE/conftest.stderr.log" >&2
+fi
 
 set -e
 
