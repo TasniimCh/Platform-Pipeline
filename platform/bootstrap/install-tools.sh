@@ -288,9 +288,9 @@ install_required_tools() {
     exit "$PLATFORM_EXIT_CONFIG"
   }
 
-  # Install Conftest when CI policy testing is enabled.
-  local policy_enabled
-  policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
+  # Install Conftest when policy enforcement is enabled.
+local policy_enabled
+policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
 import json
 import os
 
@@ -305,16 +305,14 @@ print("yes" if enabled else "")
 PY
 )
 
-  if [ "$policy_enabled" = "yes" ]; then
-    log_info "Policy enforcement enabled; installing conftest"
+if [ "$policy_enabled" = "yes" ]; then
+  log_info "Policy enforcement enabled; installing conftest"
 
-    install_conftest || {
-      log_error "Conftest installation failed"
-      exit "$PLATFORM_EXIT_FAILURE"
-    }
-  else
-    log_debug "Policy enforcement disabled; skipping conftest installation"
-  fi
+  install_conftest || {
+    log_error "Conftest installation failed"
+    exit "$PLATFORM_EXIT_FAILURE"
+  }
+fi
 
   # Install container/supply-chain tools if enabled.
   local has_container
