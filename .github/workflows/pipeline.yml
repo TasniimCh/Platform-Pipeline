@@ -120,18 +120,26 @@ jobs:
           ref: supply-chain
           path: platform
 
-      - name: Install policy testing tools
+      - name: Install required tools
         shell: bash
         run: |
-          set -euo pipefail
+           set -euo pipefail
 
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+           export WORKSPACE="$GITHUB_WORKSPACE"
+           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
 
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
-            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
+           export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+
+           bash "${GITHUB_WORKSPACE}/platform/platform/bootstrap/install-tools.sh" \
+             "${GITHUB_WORKSPACE}/${CONFIG_FILE}"
+
+           echo "PATH=$PATH"
+
+           echo "Checking Conftest..."
+           command -v conftest
+           conftest --version
 
       - name: Run CI Policy Testing provider
         shell: bash
@@ -143,8 +151,13 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
 
-          bash "${{ github.workspace }}/platform/platform/policy/run.sh"
+          export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
+          echo "Checking Conftest before policy execution..."
+          command -v conftest
+          conftest --version
+
+          bash "${GITHUB_WORKSPACE}/platform/platform/policy/run.sh"
       - name: Upload CI Policy Testing reports
         uses: actions/upload-artifact@v4
         with:
