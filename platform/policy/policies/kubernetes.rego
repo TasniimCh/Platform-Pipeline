@@ -8,7 +8,7 @@ package main
 deny contains {
     "policy_id": "kubernetes/container-non-root",
     "severity": "high",
-    "message": "Container must explicitly set securityContext.runAsNonRoot to true",
+    "msg": "Container must explicitly set securityContext.runAsNonRoot to true",
 } if {
     input.kind == "Deployment"
 
@@ -25,7 +25,7 @@ deny contains {
 warn contains {
     "policy_id": "kubernetes/container-resources",
     "severity": "medium",
-    "message": "Container should define CPU and memory requests and limits",
+    "msg": "Container should define CPU and memory requests and limits",
 } if {
     input.kind == "Deployment"
 
@@ -37,7 +37,7 @@ warn contains {
 warn contains {
     "policy_id": "kubernetes/container-resources",
     "severity": "medium",
-    "message": "Container should define CPU and memory requests and limits",
+    "msg": "Container should define CPU and memory requests and limits",
 } if {
     input.kind == "Deployment"
 
@@ -54,7 +54,7 @@ warn contains {
 warn contains {
     "policy_id": "kubernetes/container-image-tag",
     "severity": "medium",
-    "message": "Container image should use an explicit version instead of the latest tag",
+    "msg": "Container image should use an explicit version instead of the latest tag",
 } if {
     input.kind == "Deployment"
 
@@ -71,7 +71,7 @@ warn contains {
 warn contains {
     "policy_id": "kubernetes/service-nodeport",
     "severity": "medium",
-    "message": "Service should not use NodePort unless explicitly required",
+    "msg": "Service should not use NodePort unless explicitly required",
 } if {
     input.kind == "Service"
 
