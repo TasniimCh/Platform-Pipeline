@@ -22,7 +22,15 @@ load_merged_config_json() {
 
     local default_config="$DEFAULT_CONFIG"
     local capabilities_config="$CAPABILITY_MAP"
-    local repository_config="$workspace/$config_file"
+    local repository_config
+
+    if [ -z "$config_file" ]; then
+        repository_config="$workspace/.devsecops/pipeline.yaml"
+    elif [ "${config_file#/}" != "$config_file" ]; then
+        repository_config="$config_file"
+    else
+        repository_config="$workspace/$config_file"
+    fi
 
     if [ ! -f "$default_config" ]; then
         log_error "Default configuration not found: $default_config"
@@ -33,8 +41,6 @@ load_merged_config_json() {
         log_error "Capability map not found: $capabilities_config"
         return "$PLATFORM_EXIT_CONFIG"
     fi
-
-    # Absence de config client = cas normal (défauts plateforme) — géré par load_yaml() côté Python.
 
     python3 - \
         "$default_config" \
