@@ -34,6 +34,8 @@ load_merged_config_json() {
         return "$PLATFORM_EXIT_CONFIG"
     fi
 
+    # Absence de config client = cas normal (défauts plateforme) — géré par load_yaml() côté Python.
+
     python3 - \
         "$default_config" \
         "$repository_config" \
