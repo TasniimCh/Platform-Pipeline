@@ -627,8 +627,11 @@ resources_evaluated = 0
 
 
 def normalize_finding(finding, filename, severity):
+    metadata = finding.get("metadata") or {}
+
     policy_id = (
         finding.get("policy_id")
+        or metadata.get("policy_id")
         or finding.get("rule")
         or finding.get("policy")
         or finding.get("id")
