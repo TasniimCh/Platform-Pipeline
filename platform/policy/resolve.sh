@@ -8,6 +8,10 @@ source "$PLATFORM_ROOT/lib/constants.sh"
 source "$PLATFORM_ROOT/lib/logging.sh"
 source "$PLATFORM_ROOT/config/config.sh"
 
+echo "DEBUG SCRIPT_DIR=$SCRIPT_DIR"
+echo "DEBUG PLATFORM_ROOT=$PLATFORM_ROOT"
+echo "DEBUG RESOLVE_SCRIPT=$SCRIPT_DIR/resolve.sh"
+echo "DEBUG RESOLVE_EXISTS=$(test -f "$SCRIPT_DIR/resolve.sh" && echo yes || echo no)"
 
 resolve_manifests() {
   local workspace="${1:-$WORKSPACE}"
