@@ -1,29 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
-PLATFORM_ROOT=$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+_CONFIG_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
+_CONFIG_PLATFORM_ROOT=$(cd "$_CONFIG_SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 
-source "$PLATFORM_ROOT/lib/constants.sh"
-source "$PLATFORM_ROOT/lib/logging.sh"
+source "$_CONFIG_PLATFORM_ROOT/lib/constants.sh"
+source "$_CONFIG_PLATFORM_ROOT/lib/logging.sh"
 
-DEFAULT_CONFIG="$PLATFORM_ROOT/config/default.yaml"
-CAPABILITY_MAP="$PLATFORM_ROOT/config/capabilities.yaml"
+DEFAULT_CONFIG="$_CONFIG_PLATFORM_ROOT/config/default.yaml"
+CAPABILITY_MAP="$_CONFIG_PLATFORM_ROOT/config/capabilities.yaml"
 
 load_merged_config_json() {
-  local workspace="${1:-$WORKSPACE}"
-  local config_file="${2:-$CONFIG_FILE}"
-  local custom_config
+    local workspace="${1:-$PWD}"
+    local config_file="${2:-.devsecops/pipeline.yaml}"
 
-  if [ -z "$config_file" ]; then
-    custom_config="$workspace/.devsecops/pipeline.yaml"
-  elif [ "${config_file#/}" != "$config_file" ]; then
-    custom_config="$config_file"
-  else
-    custom_config="$workspace/$config_file"
-  fi
+    local default_config="$DEFAULT_CONFIG"
+    local capabilities_config="$CAPABILITY_MAP"
+    local repository_config="$workspace/$config_file"
 
-  python3 - "$DEFAULT_CONFIG" "$custom_config" "$CAPABILITY_MAP" <<'PY'
+    if [ ! -f "$default_config" ]; then
+        log_error "Default configuration not found: $default_config"
+        return "$PLATFORM_EXIT_CONFIG"
+    fi
+
+    if [ ! -f "$capabilities_config" ]; then
+        log_error "Capability map not found: $capabilities_config"
+        return "$PLATFORM_EXIT_CONFIG"
+    fi
+
+    if [ ! -f "$repository_config" ]; then
+        log_error "Repository configuration not found: $repository_config"
+        return "$PLATFORM_EXIT_CONFIG"
+    fi
+
+    python3 - \
+        "$default_config" \
+        "$capabilities_config" \
+        "$repository_config" <<'PY'
 import json
 import os
 import sys
