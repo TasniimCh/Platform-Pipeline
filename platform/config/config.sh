@@ -3,10 +3,16 @@ set -euo pipefail
 
 _CONFIG_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 _CONFIG_PLATFORM_ROOT=$(cd "$_CONFIG_SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+_CONFIG_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
+_CONFIG_PLATFORM_ROOT=$(cd "$_CONFIG_SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 
 source "$_CONFIG_PLATFORM_ROOT/lib/constants.sh"
 source "$_CONFIG_PLATFORM_ROOT/lib/logging.sh"
+source "$_CONFIG_PLATFORM_ROOT/lib/constants.sh"
+source "$_CONFIG_PLATFORM_ROOT/lib/logging.sh"
 
+DEFAULT_CONFIG="$_CONFIG_PLATFORM_ROOT/config/default.yaml"
+CAPABILITY_MAP="$_CONFIG_PLATFORM_ROOT/config/capabilities.yaml"
 DEFAULT_CONFIG="$_CONFIG_PLATFORM_ROOT/config/default.yaml"
 CAPABILITY_MAP="$_CONFIG_PLATFORM_ROOT/config/capabilities.yaml"
 
@@ -28,15 +34,10 @@ load_merged_config_json() {
         return "$PLATFORM_EXIT_CONFIG"
     fi
 
-    if [ ! -f "$repository_config" ]; then
-        log_error "Repository configuration not found: $repository_config"
-        return "$PLATFORM_EXIT_CONFIG"
-    fi
-
     python3 - \
         "$default_config" \
-        "$capabilities_config" \
-        "$repository_config" <<'PY'
+        "$repository_config" \
+        "$capabilities_config" <<'PY'
 import json
 import os
 import sys
