@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}") >/dev/null 2>&1 && pwd)
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 PLATFORM_ROOT=$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 
 source "$PLATFORM_ROOT/lib/constants.sh"
@@ -807,15 +807,8 @@ case "$conftest_status" in
     # or an execution/tool error.
 
     final_status=$(
-      python3 - "$REPORT_FILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-    report = json.load(f)
-
-print(report.get("status", "execution_error"))
-PY
+      python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", "execution_error"))' \
+        "$REPORT_FILE"
     )
 
     case "$final_status" in
