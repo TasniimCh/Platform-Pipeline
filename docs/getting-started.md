@@ -86,6 +86,26 @@ capabilities:
   static_analysis: true
   dependency_analysis: true
   infrastructure_analysis: true
+  build: false
+  unit_testing: false
+  integration_testing: false
+
+build:
+  working_directory: .
+  runtime:
+    language: node
+    version: "22"
+    package_manager: null
+  command: null
+
+testing:
+  working_directory: .
+  unit:
+    enabled: true
+    command: null
+  integration:
+    enabled: false
+    command: null
 ```
 
 Legacy scanner-specific configuration is still supported for compatibility:
@@ -115,6 +135,13 @@ After a workflow run, the platform writes standardized reports into:
 ```
 
 The workflow uploads the entire `.devsecops/reports` directory as an artifact named `devsecops-reports`.
+
+Container and supply-chain evidence is written under:
+
+```
+.devsecops/reports/container/<image-id-or-digest>/
+```
+Each image-specific folder contains `report.json` and `metadata.json`, plus tool-native outputs such as `trivy` or `sbom` files.
 
 ## Platform Contract
 
