@@ -1,0 +1,42 @@
+version: "0.1.0"
+
+features:
+  cvss_severity:
+    source: cvss_score
+    weight: 0.25
+    normalize: "linear_0_10_to_0_1"
+
+  secret_detected:
+    source: gitleaks.finding_present
+    weight: 0.20
+    normalize: "boolean"
+
+  k8s_privileged:
+    source: checkov.privileged_container
+    weight: 0.15
+    normalize: "boolean"
+
+  internet_exposure:
+    source: project_context.internet_exposed
+    weight: 0.10
+    normalize: "boolean"
+
+  dependency_exploitability:
+    source: snyk.exploit_maturity
+    weight: 0.10
+    normalize: "categorical_map"
+
+  historical_incidents:
+    source: runtime_kb.incident_count
+    weight: 0.10
+    normalize: "log_scale"
+
+  test_coverage_gap:
+    source: coverage.gap_ratio
+    weight: 0.05
+    normalize: "linear_0_1"
+
+  policy_violation_count:
+    source: k8s_policy.violation_count
+    weight: 0.05
+    normalize: "linear_capped"

@@ -1,0 +1,17 @@
+version: "0.1.0"
+
+thresholds:
+  low:
+    max: 30
+  warning:
+    max: 60
+  block:
+    max: 80
+  reject:
+    max: 100
+
+actions:
+  low: promote
+  warning: manual_approval
+  block: block
+  reject: reject

@@ -89,6 +89,10 @@ capabilities:
   build: false
   unit_testing: false
   integration_testing: false
+  gitops_update: false
+  image_signing: false
+  admission_control: false
+  cluster_validation: false
 
 build:
   working_directory: .

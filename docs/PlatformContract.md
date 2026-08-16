@@ -98,6 +98,10 @@ capabilities:
   sbom: false
   provenance: false
   policy_enforcement: false
+  gitops_update: false
+  image_signing: false
+  admission_control: false
+  cluster_validation: false
 
 build:
   working_directory: .
@@ -125,6 +129,17 @@ container:
   registry:
     type: dockerhub
     repository: null
+
+cluster_validation:
+  environment: dev
+  rollout:
+    timeout_seconds: 180
+    poll_interval_seconds: 5
+  smoke_tests:
+    enabled: true
+    timeout_seconds: 120
+    command: null
+
 policy:
   paths: []
   policy_paths: []

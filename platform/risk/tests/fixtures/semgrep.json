@@ -1,0 +1,9 @@
+{
+  "results": [
+    {
+      "check_id": "S100",
+      "extra": {"severity": "MEDIUM", "message": "possible issue"},
+      "path": "src/main.py"
+    }
+  ]
+}

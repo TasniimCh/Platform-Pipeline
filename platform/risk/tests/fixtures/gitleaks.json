@@ -1,0 +1,8 @@
+[
+  {
+    "rule_id": "G100",
+    "severity": "high",
+    "file": "secrets.txt",
+    "metadata": {"description": "found secret"}
+  }
+]

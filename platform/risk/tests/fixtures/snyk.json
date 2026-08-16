@@ -1,0 +1,10 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2020-1234",
+      "severity": "high",
+      "cvssScore": 7.5,
+      "packageName": "openssl"
+    }
+  ]
+}

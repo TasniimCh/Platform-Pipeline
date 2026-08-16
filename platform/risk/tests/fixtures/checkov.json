@@ -1,0 +1,12 @@
+{
+  "results": {
+    "failed_checks": [
+      {
+        "check_id": "CKV_K8S_1",
+        "severity": "HIGH",
+        "file_path": "deployment.yaml",
+        "message": "privileged container"
+      }
+    ]
+  }
+}

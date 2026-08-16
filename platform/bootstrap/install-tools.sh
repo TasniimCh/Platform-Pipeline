@@ -238,6 +238,84 @@ install_conftest() {
   return 0
 }
 
+install_cosign() {
+  if command -v cosign >/dev/null 2>&1; then
+    log_info "cosign is already installed"
+    return 0
+  fi
+
+  local version="v2.4.1"
+  local url="https://github.com/sigstore/cosign/releases/download/${version}/cosign-linux-amd64"
+  local user_install_dir="${HOME}/.local/bin"
+
+  log_info "Installing cosign ${version} from $url"
+  mkdir -p "$user_install_dir"
+
+  if ! download_file "$url" "$user_install_dir/cosign"; then
+    log_error "Failed to download cosign ${version}"
+    return 1
+  fi
+
+  chmod 0755 "$user_install_dir/cosign"
+  export PATH="$user_install_dir:$PATH"
+
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    printf 'PATH=%s\n' "$user_install_dir:$PATH" >> "$GITHUB_ENV"
+  fi
+
+  if ! command -v cosign >/dev/null 2>&1; then
+    log_error "Cosign installation completed but executable is not available"
+    return 1
+  fi
+
+  log_info "Cosign version: $(cosign version)"
+  return 0
+}
+
+install_kyverno_cli() {
+  if command -v kyverno >/dev/null 2>&1; then
+    log_info "kyverno CLI is already installed"
+    return 0
+  fi
+
+  local version="v1.13.0"
+  local archive="kyverno-cli_${version}_linux_x86_64.tar.gz"
+  local url="https://github.com/kyverno/kyverno/releases/download/${version}/${archive}"
+  local user_install_dir="${HOME}/.local/bin"
+  local tmpdir
+
+  tmpdir=$(mktemp -d)
+  log_info "Installing kyverno CLI ${version} from $url"
+  mkdir -p "$user_install_dir"
+
+  if ! download_file "$url" "$tmpdir/$archive"; then
+    rm -rf "$tmpdir"
+    log_error "Failed to download kyverno CLI ${version}"
+    return 1
+  fi
+
+  if ! tar -xzf "$tmpdir/$archive" -C "$tmpdir"; then
+    rm -rf "$tmpdir"
+    log_error "Failed to extract kyverno CLI ${version}"
+    return 1
+  fi
+
+  install -m 0755 "$tmpdir/kyverno" "$user_install_dir/kyverno" || {
+    rm -rf "$tmpdir"
+    log_error "Failed to install kyverno CLI"
+    return 1
+  }
+
+  export PATH="$user_install_dir:$PATH"
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    printf 'PATH=%s\n' "$user_install_dir:$PATH" >> "$GITHUB_ENV"
+  fi
+
+  rm -rf "$tmpdir"
+  log_info "Kyverno CLI version: $(kyverno version)"
+  return 0
+}
+
 install_required_tools() {
   local config_path="$1"
   local workspace="${WORKSPACE:-$PWD}"
@@ -271,6 +349,12 @@ install_required_tools() {
           ;;
         checkov)
           install_python_package checkov
+          ;;
+        cosign)
+          install_cosign
+          ;;
+        kyverno)
+          install_kyverno_cli
           ;;
         *)
           log_warn "No installer implemented for scanner '$scanner'"

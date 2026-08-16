@@ -3,3 +3,6 @@ capabilities:
   static_analysis: semgrep
   dependency_analysis: snyk
   infrastructure_analysis: checkov
+  image_signing: cosign
+  admission_control: kyverno
+  gitops_update: gitops_update
