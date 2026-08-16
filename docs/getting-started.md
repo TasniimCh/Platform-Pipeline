@@ -130,22 +130,92 @@ scanners:
     args: []
 ```
 
+## Pipeline Capabilities
+
+Each capability below can be toggled independently in `.devsecops/pipeline.yaml`.
+Enabling a capability with missing prerequisites causes the corresponding job to fail with a configuration error. The platform never fails silently.
+
+| Capability | Default | Prerequisites | What it does |
+|---|---|---|---|
+| `secret_detection` | `true` | None | Runs Gitleaks |
+| `static_analysis` | `true` | None | Runs Semgrep |
+| `dependency_analysis` | `true` | `SNYK_TOKEN` secret | Runs Snyk |
+| `infrastructure_analysis` | `true` | None | Runs Checkov |
+| `build` | `false` | `package.json` with a resolvable build command | Runs the build step |
+| `unit_testing` | `false` | `package.json` with `scripts.test` or an explicit unit-test command | Runs unit tests |
+| `integration_testing` | `false` | `package.json` with `scripts.integration` or an explicit integration-test command | Runs integration tests |
+| `container_build` | `false` | Dockerfile at the configured path | Builds the container image |
+| `container_scan` | `false` | `container_build: true` | Runs Trivy on the built image |
+| `sbom` | `false` | `container_build: true` | Generates a CycloneDX SBOM via Syft |
+| `provenance` | `false` | `container_build: true` | Generates a SLSA provenance predicate |
+| `image_signing` | `false` | `container_build: true`; `id-token: write` permission on the calling workflow; registry must support OCI referrers for keyless mode | Signs the image and provenance attestation with Cosign |
+| `policy_enforcement` | `false` | Kubernetes manifests or Helm chart present in the repo | Runs Conftest against the configured policy paths |
+| `gitops_update` | `false` | GitOps repository write access; risk decision must be `promote` or `manual_approval` | Updates the image digest in the GitOps repository and triggers ArgoCD sync |
+| `admission_control` | `false` | Platform-side: Kyverno installed on the target cluster and ClusterPolicies applied | Enforces cluster admission policies for deployment integrity |
+| `cluster_validation` | `false` | `gitops_update: true`; CI job has cluster access credentials; ArgoCD application exists for the client | Waits for rollout health and runs application-owned smoke tests on the DEV deployment |
+| `risk_assessment` | platform-managed | At least one upstream capability enabled; partial evidence is tolerated | Aggregates evidence into a weighted risk score and a `promote`/`manual_approval`/`block`/`reject` decision |
+
+### Additional secrets required, by capability
+
+| Secret | Required when |
+|---|---|
+| `SNYK_TOKEN` | `dependency_analysis: true` |
+| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | `container_build: true` |
+| GitOps repo credential (TBD, for example `GITOPS_DEPLOY_TOKEN`) | `gitops_update: true` |
+| Cluster access credential (TBD, for example `CLUSTER_ACCESS_TOKEN` or OIDC role ARN) | `cluster_validation: true` |
+
+### One-time platform-side setup
+
+The following are configured once by the platform team, not by each client repository:
+
+- Kyverno and ArgoCD installed on the target cluster.
+- An ArgoCD `AppProject` and `Application` registered for the client namespace.
+- Vault paths and Kubernetes auth roles scoped to the client's namespace if secrets are used.
+- CI-to-cluster access configured with least-privilege RBAC; never `cluster-admin`.
+
+Contact the platform team before enabling `gitops_update`, `admission_control`, or `cluster_validation`.
+
+## Understanding pipeline outcomes
+
+The pipeline can finish without a deployment even when the scanner stage is green. This happens when the Risk Advisor decides to `block`, `reject`, or require `manual_approval`.
+
+That outcome is expected and is not a scan failure. It represents the final deployment gate for the promotion decision, which is why the pipeline can be green from a static-analysis perspective while still refusing deployment for policy or risk reasons.
+
 ## Review Generated Reports
 
-After a workflow run, the platform writes standardized reports into:
+After a workflow run, the platform writes standardized reports into the `.devsecops/reports` tree.
+
+Risk assessment evidence is written under:
 
 ```
-.devsecops/reports/<scanner>/
+.devsecops/reports/risk/assessment.json
 ```
 
-The workflow uploads the entire `.devsecops/reports` directory as an artifact named `devsecops-reports`.
+GitOps update evidence is written under:
+
+```
+.devsecops/reports/gitops/
+```
+
+Cluster validation evidence is written under:
+
+```
+.devsecops/reports/cluster-validation/
+```
+
+The workflow uploads the relevant artifacts by stage. Scanner outputs remain scoped per tool under:
+
+```
+.devsecops/reports/<tool>/
+```
 
 Container and supply-chain evidence is written under:
 
 ```
 .devsecops/reports/container/<image-id-or-digest>/
 ```
-Each image-specific folder contains `report.json` and `metadata.json`, plus tool-native outputs such as `trivy` or `sbom` files.
+
+Each image-specific folder contains `report.json` and `metadata.json`, plus tool-native outputs such as Trivy or SBOM files.
 
 ## Platform Contract
 

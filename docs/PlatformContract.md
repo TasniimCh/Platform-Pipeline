@@ -77,6 +77,32 @@ The platform currently requires the following secret:
 
 The token must not be committed to the repository or stored in `.devsecops/pipeline.yaml`.
 
+## Pipeline capabilities
+
+The public contract is capability-based. The same platform behavior can be implemented with different vendor tools behind the same capability boundary; client repositories only configure capabilities, not vendor implementations.
+
+| Capability | Default | Prerequisites | Primary effect |
+|---|---|---|---|
+| `secret_detection` | `true` | None | Runs Gitleaks |
+| `static_analysis` | `true` | None | Runs Semgrep |
+| `dependency_analysis` | `true` | `SNYK_TOKEN` secret | Runs Snyk |
+| `infrastructure_analysis` | `true` | None | Runs Checkov |
+| `build` | `false` | A resolvable build command for the repository | Builds the application |
+| `unit_testing` | `false` | Unit test command or package script | Executes unit tests |
+| `integration_testing` | `false` | Integration test command or package script | Executes integration tests |
+| `container_build` | `false` | Dockerfile and registry configuration | Produces the OCI image |
+| `container_scan` | `false` | `container_build: true` | Runs image scanning with Trivy |
+| `sbom` | `false` | `container_build: true` | Produces an SBOM |
+| `provenance` | `false` | `container_build: true` | Produces a provenance predicate |
+| `image_signing` | `false` | `container_build: true`, OIDC token permission, registry support for OCI referrers | Signs the image and its provenance attestation |
+| `policy_enforcement` | `false` | Policy files or chart manifests | Runs policy validation before deployment |
+| `gitops_update` | `false` | GitOps repo write access and a valid promotion decision | Updates the image digest in the GitOps repo |
+| `admission_control` | `false` | Platform-side Kyverno installed and policy bundle applied | Enforces admission-time policy on the cluster |
+| `cluster_validation` | `false` | `gitops_update: true`, cluster access, and an ArgoCD application for the repo | Waits for rollout and executes smoke tests |
+| `risk_assessment` | platform-managed | Upstream evidence available | Produces the weighted risk assessment and `promote`/`manual_approval`/`block`/`reject` decision |
+
+`scoring.yaml`, `decision.yaml`, and Kyverno policy bundles are platform-managed artifacts and are versioned outside client configuration. Client compatibility is preserved as long as the `.devsecops/pipeline.yaml` schema remains stable.
+
 ## `pipeline.yaml` Schema
 
 Client repositories may provide a YAML configuration file at `.devsecops/pipeline.yaml`.
@@ -154,23 +180,64 @@ The platform validates that client configuration contains either a `capabilities
 The platform writes standardized reports to:
 
 ```
-.devsecops/reports/<scanner>/
+.devsecops/reports/<stage>/
+```
+
+The following report locations are part of the public contract:
+
+```
+.devsecops/reports/build/
+.devsecops/reports/tests/
+.devsecops/reports/policy/
+.devsecops/reports/container/
+.devsecops/reports/risk/assessment.json
+.devsecops/reports/gitops/
+.devsecops/reports/cluster-validation/
 ```
 
 The platform emits:
 
-- `report.json`: raw scanners findings in JSON format
+- `report.json`: raw scanner findings in JSON format
 - `metadata.json`: standardized metadata for platform consumption
+- `assessment.json`: risk assessment artifact with score, category, contributors, explanation, and decision reference
+- `summary.json` and per-phase metadata for cluster validation when the capability is enabled
 
-The full report contract is:
+The full phase report contract is:
 
 ```
-.devsecops/reports/<scanner>/
+.devsecops/reports/<stage>/
   report.json
   metadata.json
 ```
 
-The platform also uploads `.devsecops/reports` as a workflow artifact named `devsecops-reports`.
+Risk assessment output is a structured artifact as defined by the Risk Advisor specification:
+
+```json
+{
+  "decision_reference": {
+    "action": "promote",
+    "insufficient_evidence": false
+  },
+  "risk_assessment": {
+    "score": 0,
+    "category": "low",
+    "contributors": []
+  }
+}
+```
+
+Cluster validation output conforms to the runtime evidence model:
+
+```json
+{
+  "capability": "cluster_validation",
+  "status": "passed",
+  "environment": "dev",
+  "phases": ["admission", "rollout", "smoke_tests"]
+}
+```
+
+The platform also uploads `.devsecops/reports` as workflow artifacts at the relevant stage boundaries.
 
 ## Exit Code Contract
 
