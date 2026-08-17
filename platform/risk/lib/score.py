@@ -13,7 +13,7 @@ def score_assessment(findings, scoring_policy):
     features = {}
     # cvss_severity: use max cvss among findings
     cvss_vals = [f.get("cvss_score") for f in findings if f.get("cvss_score") is not None]
-    cvss_vals = [float(v) for v in cvss_vals if _is_number(v:=v)]
+    cvss_vals = [float(v) for v in cvss_vals if _is_number(v)]
     features_present = {}
     if cvss_vals:
         features["cvss_severity"] = _normalize_cvss_to_0_1(max(cvss_vals))
