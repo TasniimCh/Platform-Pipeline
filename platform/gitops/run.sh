@@ -47,9 +47,9 @@ decision = str(
     or "promote"
 ).strip().lower()
 
-if decision not in {"promote", "approved"}:
+if decision not in {"promote", "approved", "manual_approval"}:
     raise SystemExit(
-        "Configuration validation failed: 'gitops.decision' must be 'promote' or 'approved' before updating GitOps state"
+        "Configuration validation failed: 'gitops.decision' must be 'promote', 'approved' or 'manual_approval' before updating GitOps state"
     )
 
 repo_path = gitops.get("repo_path")
