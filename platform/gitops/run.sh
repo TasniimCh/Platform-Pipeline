@@ -41,7 +41,12 @@ gitops = config.get("gitops", {})
 if not isinstance(gitops, dict):
     raise SystemExit("Configuration validation failed: 'gitops' must be a mapping")
 
-decision = str(gitops.get("decision") or os.environ.get("GITOPS_DECISION") or "promote").strip().lower()
+decision = str(
+    os.environ.get("GITOPS_DECISION")
+    or config.get("gitops", {}).get("decision")
+    or "promote"
+).strip().lower()
+
 if decision not in {"promote", "approved"}:
     raise SystemExit(
         "Configuration validation failed: 'gitops.decision' must be 'promote' or 'approved' before updating GitOps state"
