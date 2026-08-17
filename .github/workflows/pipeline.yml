@@ -135,12 +135,6 @@ jobs:
            bash "${GITHUB_WORKSPACE}/platform/platform/bootstrap/install-tools.sh" \
              "${GITHUB_WORKSPACE}/${CONFIG_FILE}"
 
-           echo "PATH=$PATH"
-
-           echo "Checking Conftest..."
-           command -v conftest
-           conftest --version
-
       - name: Run CI Policy Testing provider
         shell: bash
         run: |
