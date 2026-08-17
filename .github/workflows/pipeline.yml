@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Bootstrap platform environment
@@ -67,7 +67,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Install required tools
@@ -117,7 +117,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Install required tools
@@ -147,10 +147,6 @@ jobs:
 
           export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
-          echo "Checking Conftest before policy execution..."
-          command -v conftest
-          conftest --version
-
           bash "${GITHUB_WORKSPACE}/platform/platform/policy/run.sh"
       - name: Upload CI Policy Testing reports
         uses: actions/upload-artifact@v4
@@ -173,7 +169,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Install container tools
@@ -221,7 +217,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Install scanner tools
@@ -264,7 +260,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Download standard report artifacts
@@ -333,7 +329,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Install required tools
@@ -382,7 +378,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
-          ref: supply-chain
+          ref: risk-advisor
           path: platform
 
       - name: Install required tools
