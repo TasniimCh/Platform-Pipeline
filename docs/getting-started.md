@@ -150,7 +150,7 @@ Enabling a capability with missing prerequisites causes the corresponding job to
 | `provenance` | `false` | `container_build: true` | Generates a SLSA provenance predicate |
 | `image_signing` | `false` | `container_build: true`; `id-token: write` permission on the calling workflow; registry must support OCI referrers for keyless mode | Signs the image and provenance attestation with Cosign |
 | `policy_enforcement` | `false` | Kubernetes manifests or Helm chart present in the repo | Runs Conftest against the configured policy paths |
-| `gitops_update` | `false` | GitOps repository write access; risk decision must be `promote` or `manual_approval` | Updates the image digest in the GitOps repository and triggers ArgoCD sync |
+| `gitops_update` | `false` | GitOps repository write access; risk decision must be `promote` | Updates the image digest in the GitOps repository and triggers ArgoCD sync |
 | `admission_control` | `false` | Platform-side: Kyverno installed on the target cluster and ClusterPolicies applied | Enforces cluster admission policies for deployment integrity |
 | `cluster_validation` | `false` | `gitops_update: true`; CI job has cluster access credentials; ArgoCD application exists for the client | Waits for rollout health and runs application-owned smoke tests on the DEV deployment |
 | `risk_assessment` | platform-managed | At least one upstream capability enabled; partial evidence is tolerated | Aggregates evidence into a weighted risk score and a `promote`/`manual_approval`/`block`/`reject` decision |

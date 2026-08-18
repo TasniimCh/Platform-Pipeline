@@ -1,11 +1,12 @@
 name: Platform Pipeline
 
 on:
-  push:
   workflow_call:
     secrets:
       SNYK_TOKEN:
-        required: true
+        required: false
+      GITOPS_TOKEN:
+        required: false
     inputs:
       config-file:
         type : string
@@ -319,8 +320,10 @@ jobs:
 
   gitops:
     needs: [bootstrap, risk_assessment]
-    if: ${{ needs.risk_assessment.outputs.decision == 'promote' || needs.risk_assessment.outputs.decision == 'manual_approval' }}
+    if: ${{ needs.risk_assessment.outputs.decision == 'promote' }}
     runs-on: ubuntu-latest
+    env:
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -331,6 +334,87 @@ jobs:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
+
+      - name: Resolve GitOps repository metadata
+        id: gitops-meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          config_file = Path("${{ needs.bootstrap.outputs.config-file }}")
+          data = yaml.safe_load(config_file.read_text(encoding='utf-8')) or {}
+          gitops = data.get('gitops', {})
+          repository = gitops.get('repository')
+          ref = gitops.get('ref') or 'main'
+          values_file = gitops.get('values_file')
+
+          if not repository or not values_file:
+              raise SystemExit("Missing gitops.repository or gitops.values_file in client config")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f"repository={repository}\n")
+              out.write(f"ref={ref}\n")
+              out.write(f"values_file={values_file}\n")
+          PY
+
+      - name: Checkout client GitOps repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GITOPS_TOKEN:-}" ]; then
+            echo "GITOPS_TOKEN is required when gitops_update is enabled"
+            exit 2
+          fi
+
+          repo="${{ steps.gitops-meta.outputs.repository }}"
+          ref="${{ steps.gitops-meta.outputs.ref }}"
+          git clone --branch "$ref" --depth 1 "https://x-access-token:${GITOPS_TOKEN}@github.com/${repo}.git" "$GITHUB_WORKSPACE/gitops-repo"
+
+      - name: Resolve runtime image and GitOps values
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image_digest="$(python3 - <<'PY'
+          import glob, json, os
+          candidates = sorted(glob.glob(os.path.join('.devsecops', 'reports', 'container', '*', 'metadata.json')))
+          if not candidates:
+              raise SystemExit('No container metadata found for image digest resolution')
+          latest = candidates[-1]
+          with open(latest, 'r', encoding='utf-8') as handle:
+              payload = json.load(handle)
+          digest = payload.get('image_id') or payload.get('image') or ''
+          if not digest:
+              raise SystemExit('Container metadata is missing image identity')
+          print(digest)
+          PY
+          )"
+
+          image_repository="$(python3 - <<'PY'
+          import glob, json, os
+          candidates = sorted(glob.glob(os.path.join('.devsecops', 'reports', 'container', '*', 'metadata.json')))
+          if not candidates:
+              raise SystemExit('No container metadata found for image repository resolution')
+          latest = candidates[-1]
+          with open(latest, 'r', encoding='utf-8') as handle:
+              payload = json.load(handle)
+          image_ref = payload.get('image') or ''
+          if not image_ref:
+              raise SystemExit('Container metadata is missing image reference')
+          print(image_ref.split(':', 1)[0])
+          PY
+          )"
+
+          echo "IMAGE_DIGEST=${image_digest}" >> "$GITHUB_ENV"
+          echo "IMAGE_REPOSITORY=${image_repository}" >> "$GITHUB_ENV"
+          echo "GITOPS_REPO_PATH=${GITHUB_WORKSPACE}/gitops-repo" >> "$GITHUB_ENV"
+          echo "GITOPS_VALUES_FILE=${{ steps.gitops-meta.outputs.values_file }}" >> "$GITHUB_ENV"
+          echo "GITOPS_REF=${{ steps.gitops-meta.outputs.ref }}" >> "$GITHUB_ENV"
+          echo "GITOPS_DECISION=${{ needs.risk_assessment.outputs.decision }}" >> "$GITHUB_ENV"
 
       - name: Install required tools
         shell: bash
@@ -350,7 +434,12 @@ jobs:
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export GITOPS_REPO_PATH="$GITHUB_WORKSPACE/gitops-repo"
+          export GITOPS_VALUES_FILE="${{ steps.gitops-meta.outputs.values_file }}"
           export GITOPS_DECISION="${{ needs.risk_assessment.outputs.decision }}"
+          export IMAGE_REPOSITORY="$IMAGE_REPOSITORY"
+          export IMAGE_DIGEST="$IMAGE_DIGEST"
+          export GITOPS_REF="${{ steps.gitops-meta.outputs.ref }}"
           bash "${{ github.workspace }}/platform/platform/gitops/run.sh"
 
       - name: Upload GitOps update report

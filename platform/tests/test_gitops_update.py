@@ -56,21 +56,20 @@ def test_gitops_update_updates_digest_and_commits(tmp_path):
         "capabilities:\n"
         "  gitops_update: true\n"
         "gitops:\n"
-        "  decision: promote\n"
-        "  repo_path: \"" + str(gitops_repo) + "\"\n"
-        "  values_file: \"helm/values.yaml\"\n"
-        "  image:\n"
-        "    repository: \"registry.example.com/my-app\"\n"
-        "    digest: \"sha256:newdigest\"\n"
-        "  commit:\n"
-        "    author_name: \"Platform Bot\"\n"
-        "    author_email: \"platform@example.com\"\n",
+        "  repository: \"TasniimCh/MEAN-Client-GitOps\"\n"
+        "  ref: main\n"
+        "  values_file: \"helm/values.yaml\"\n",
         encoding="utf-8",
     )
 
     env = os.environ.copy()
     env["WORKSPACE"] = str(project_root)
     env["CONFIG_FILE"] = ".devsecops/pipeline.yaml"
+    env["GITOPS_REPO_PATH"] = str(gitops_repo)
+    env["GITOPS_VALUES_FILE"] = "helm/values.yaml"
+    env["IMAGE_REPOSITORY"] = "registry.example.com/my-app"
+    env["IMAGE_DIGEST"] = "sha256:newdigest"
+    env["GITOPS_DECISION"] = "promote"
 
     result = subprocess.run(
         ["bash", str(GITOPS_SCRIPT)],

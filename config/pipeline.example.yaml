@@ -12,6 +12,11 @@ capabilities:
   admission_control: false
   cluster_validation: false
 
+gitops:
+  repository: TasniimCh/MEAN-Client-GitOps
+  ref: main
+  values_file: environments/dev/values.yaml
+
 build:
   working_directory: .
   runtime:

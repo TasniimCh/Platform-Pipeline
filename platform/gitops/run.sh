@@ -11,10 +11,22 @@ source "$PLATFORM_ROOT/config/config.sh"
 : "${WORKSPACE:=${PWD}}"
 : "${CONFIG_FILE:=.devsecops/pipeline.yaml}"
 : "${LOG_LEVEL:=info}"
+: "${GITOPS_REPO_PATH:=}"
+: "${GITOPS_VALUES_FILE:=}"
+: "${GITOPS_DECISION:=}"
+: "${IMAGE_REPOSITORY:=}"
+: "${IMAGE_DIGEST:=}"
+: "${GITOPS_REF:=main}"
 
 export WORKSPACE
 export CONFIG_FILE
 export LOG_LEVEL
+export GITOPS_REPO_PATH
+export GITOPS_VALUES_FILE
+export GITOPS_DECISION
+export IMAGE_REPOSITORY
+export IMAGE_DIGEST
+export GITOPS_REF
 
 log_info "Starting GitOps update provider"
 log_info "Workspace: $WORKSPACE"
@@ -43,52 +55,43 @@ if not isinstance(gitops, dict):
 
 decision = str(
     os.environ.get("GITOPS_DECISION")
-    or config.get("gitops", {}).get("decision")
+    or gitops.get("decision")
     or "promote"
 ).strip().lower()
 
-if decision not in {"promote", "approved", "manual_approval"}:
+if decision != "promote":
     raise SystemExit(
-        "Configuration validation failed: 'gitops.decision' must be 'promote', 'approved' or 'manual_approval' before updating GitOps state"
+        "GitOps update requires a 'promote' decision; 'manual_approval' is not automatic."
     )
 
-repo_path = gitops.get("repo_path")
-values_file = gitops.get("values_file")
-image_cfg = gitops.get("image", {})
+repo_path = str(os.environ.get("GITOPS_REPO_PATH") or gitops.get("repo_path") or "").strip()
+values_file = str(os.environ.get("GITOPS_VALUES_FILE") or gitops.get("values_file") or "").strip()
+image_repository = str(os.environ.get("IMAGE_REPOSITORY") or gitops.get("image", {}).get("repository") or "").strip()
+image_digest = str(os.environ.get("IMAGE_DIGEST") or gitops.get("image", {}).get("digest") or "").strip()
 commit_cfg = gitops.get("commit", {})
-
-if not isinstance(repo_path, str) or not repo_path.strip():
-    raise SystemExit("Configuration validation failed: 'gitops.repo_path' is required")
-
-if not isinstance(values_file, str) or not values_file.strip():
-    raise SystemExit("Configuration validation failed: 'gitops.values_file' is required")
-
-if not isinstance(image_cfg, dict):
-    raise SystemExit("Configuration validation failed: 'gitops.image' must be a mapping")
-
 if not isinstance(commit_cfg, dict):
     raise SystemExit("Configuration validation failed: 'gitops.commit' must be a mapping")
 
-if not isinstance(image_cfg.get("digest"), str) or not image_cfg["digest"].strip():
-    raise SystemExit("Configuration validation failed: 'gitops.image.digest' is required")
+if not repo_path:
+    raise SystemExit("Environment validation failed: GITOPS_REPO_PATH is required")
+if not values_file:
+    raise SystemExit("Environment validation failed: GITOPS_VALUES_FILE is required")
+if not image_repository:
+    raise SystemExit("Environment validation failed: IMAGE_REPOSITORY is required")
+if not image_digest:
+    raise SystemExit("Environment validation failed: IMAGE_DIGEST is required")
 
-if not isinstance(image_cfg.get("repository"), str) or not image_cfg["repository"].strip():
-    raise SystemExit("Configuration validation failed: 'gitops.image.repository' is required")
-
-if not isinstance(commit_cfg.get("author_name"), str) or not commit_cfg["author_name"].strip():
-    commit_cfg["author_name"] = "Platform Bot"
-
-if not isinstance(commit_cfg.get("author_email"), str) or not commit_cfg["author_email"].strip():
-    commit_cfg["author_email"] = "platform@example.com"
+commit_cfg.setdefault("author_name", "Platform Bot")
+commit_cfg.setdefault("author_email", "platform@example.com")
 
 print(json.dumps({
     "decision": decision,
     "repo_path": repo_path,
     "values_file": values_file,
-    "image_repository": image_cfg["repository"],
-    "image_digest": image_cfg["digest"],
-    "commit_author_name": commit_cfg["author_name"],
-    "commit_author_email": commit_cfg["author_email"],
+    "image_repository": image_repository,
+    "image_digest": image_digest,
+    "commit_author_name": commit_cfg.get("author_name"),
+    "commit_author_email": commit_cfg.get("author_email"),
 }))
 PY
 
@@ -97,28 +100,30 @@ if [ "$?" -ne 0 ]; then
   exit "$PLATFORM_EXIT_CONFIG"
 fi
 
-python3 - "$config_json" "$WORKSPACE" <<'PY'
+python3 - "$WORKSPACE" "$config_json" <<'PY'
 import json
 import os
 import sys
 from pathlib import Path
 import yaml
 
-config = json.loads(sys.argv[1])
-workspace = Path(sys.argv[2]).resolve()
+workspace = Path(sys.argv[1]).resolve()
+config = json.loads(sys.argv[2])
 
 gitops = config.get("gitops", {})
-repo_path = Path(gitops["repo_path"]).expanduser()
+repo_path = Path(str(os.environ.get("GITOPS_REPO_PATH") or gitops.get("repo_path") or "").strip()).expanduser()
 if not repo_path.is_absolute():
     repo_path = (workspace / repo_path).resolve()
 
-values_file = Path(gitops["values_file"]).expanduser()
+values_file = Path(str(os.environ.get("GITOPS_VALUES_FILE") or gitops.get("values_file") or "").strip()).expanduser()
 if not values_file.is_absolute():
     values_file = (repo_path / values_file).resolve()
 
+image_repository = str(os.environ.get("IMAGE_REPOSITORY") or gitops.get("image", {}).get("repository") or "").strip()
+image_digest = str(os.environ.get("IMAGE_DIGEST") or gitops.get("image", {}).get("digest") or "").strip()
+
 if not repo_path.exists():
     raise SystemExit(f"GitOps repository does not exist: {repo_path}")
-
 if not values_file.exists():
     raise SystemExit(f"GitOps values file does not exist: {values_file}")
 
@@ -133,8 +138,8 @@ image = document.setdefault("image", {})
 if not isinstance(image, dict):
     raise SystemExit(f"'image' section in '{values_file}' must be a mapping")
 
-image["repository"] = gitops["image"]["repository"]
-image["digest"] = gitops["image"]["digest"]
+image["repository"] = image_repository
+image["digest"] = image_digest
 
 updated_text = yaml.safe_dump(document, sort_keys=False)
 if original_text != updated_text:
@@ -144,30 +149,28 @@ if original_text != updated_text:
 print(str(values_file))
 PY
 
-updated_values_file=$(
-  CONFIG_JSON="$config_json" python3 - "$WORKSPACE" <<'PY'
-import json
+repo_root=$(git -C "${GITOPS_REPO_PATH}" rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$repo_root" ]; then
+  log_error "GitOps repository path is not a Git repository: ${GITOPS_REPO_PATH}"
+  exit "$PLATFORM_EXIT_EXECUTION"
+fi
+
+values_path="$(python3 - "$GITOPS_REPO_PATH" "$GITOPS_VALUES_FILE" <<'PY'
 import os
 import sys
 from pathlib import Path
-
-config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
-workspace = Path(sys.argv[1]).resolve()
-gitops = config.get("gitops", {})
-repo_path = Path(gitops["repo_path"]).expanduser()
-if not repo_path.is_absolute():
-    repo_path = (workspace / repo_path).resolve()
-values_file = Path(gitops["values_file"]).expanduser()
-if not values_file.is_absolute():
-    values_file = (repo_path / values_file).resolve()
-print(str(values_file))
+repo_root = Path(sys.argv[1]).expanduser().resolve()
+values_arg = sys.argv[2].strip()
+values_path = Path(values_arg).expanduser()
+if not values_path.is_absolute():
+    values_path = (repo_root / values_path).resolve()
+print(str(values_path))
 PY
-)
+)"
 
-git_repo_root=$(git -C "$(dirname "$updated_values_file")" rev-parse --show-toplevel 2>/dev/null || true)
-if [ -n "$git_repo_root" ]; then
-  rel_values_path=$(python3 - "$updated_values_file" "$git_repo_root" <<'PY'
-import os, sys
+rel_values_path=$(python3 - "$values_path" "$repo_root" <<'PY'
+import os
+import sys
 from pathlib import Path
 value_path = Path(sys.argv[1]).resolve()
 repo_root = Path(sys.argv[2]).resolve()
@@ -175,67 +178,58 @@ print(os.path.relpath(value_path, repo_root))
 PY
 )
 
-  if ! git -C "$git_repo_root" diff --quiet -- "$rel_values_path"; then
-    set +e
-    git -C "$git_repo_root" add -- "$rel_values_path"
-    set -e
+if ! git -C "$repo_root" diff --quiet -- "$rel_values_path"; then
+  set +e
+  git -C "$repo_root" add -- "$rel_values_path"
+  set -e
 
-    if ! git -C "$git_repo_root" diff --cached --quiet; then
-      decision=$(CONFIG_JSON="$config_json" python3 - <<'PY'
-import json, os
-config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
-print(str(config.get("gitops", {}).get("decision") or os.environ.get("GITOPS_DECISION") or "promote").strip())
-PY
-)
-      app_name=$(CONFIG_JSON="$config_json" python3 - <<'PY'
-import json, os
-config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
-image_repo = config.get("gitops", {}).get("image", {}).get("repository", "application")
-print(image_repo.split("/")[-1])
-PY
-)
-      image_digest=$(CONFIG_JSON="$config_json" python3 - <<'PY'
-import json, os
-config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
-print(config.get("gitops", {}).get("image", {}).get("digest", "unknown"))
-PY
-)
-      source_commit=$(printf '%s' "${GITHUB_SHA:-${GIT_COMMIT:-unknown}}")
-      ci_run=$(printf '%s' "${GITHUB_RUN_ID:-${CI_RUN_ID:-unknown}}")
-      author_name=$(CONFIG_JSON="$config_json" python3 - <<'PY'
+  if ! git -C "$repo_root" diff --cached --quiet; then
+    decision=$(printf '%s' "${GITOPS_DECISION:-promote}" | tr '[:upper:]' '[:lower:]')
+    app_name=$(printf '%s' "${IMAGE_REPOSITORY:-application}" | sed 's#^.*\/##')
+    image_digest_value="${IMAGE_DIGEST:-unknown}"
+    source_commit=$(printf '%s' "${GITHUB_SHA:-${GIT_COMMIT:-unknown}}")
+    ci_run=$(printf '%s' "${GITHUB_RUN_ID:-${CI_RUN_ID:-unknown}}")
+    author_name=$(python3 - <<'PY'
 import json, os
 config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
 commit_cfg = config.get("gitops", {}).get("commit", {})
-print(commit_cfg.get("author_name") or "Platform Bot")
+if not isinstance(commit_cfg, dict):
+    commit_cfg = {}
+print((commit_cfg.get("author_name") or os.environ.get("GIT_AUTHOR_NAME") or "Platform Bot").strip())
 PY
 )
-      author_email=$(CONFIG_JSON="$config_json" python3 - <<'PY'
+    author_email=$(python3 - <<'PY'
 import json, os
 config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
 commit_cfg = config.get("gitops", {}).get("commit", {})
-print(commit_cfg.get("author_email") or "platform@example.com")
+if not isinstance(commit_cfg, dict):
+    commit_cfg = {}
+print((commit_cfg.get("author_email") or os.environ.get("GIT_AUTHOR_EMAIL") or "platform@example.com").strip())
 PY
 )
-      commit_title="gitops update: ${app_name} ${image_digest}"
-      commit_body=$(cat <<EOF
+
+    commit_title="gitops update: ${app_name} ${image_digest_value}"
+    commit_body=$(cat <<EOF
 Application: ${app_name}
-Image Digest: ${image_digest}
+Image Digest: ${image_digest_value}
 Source Commit: ${source_commit}
 CI Run: ${ci_run}
 Risk Assessment: ${decision}
 EOF
 )
 
-      git -C "$git_repo_root" -c user.name="$author_name" -c user.email="$author_email" commit -m "$commit_title" -m "$commit_body"
-      log_info "GitOps deployment state updated in $git_repo_root"
+    git -C "$repo_root" -c user.name="$author_name" -c user.email="$author_email" commit -m "$commit_title" -m "$commit_body"
+    if git -C "$repo_root" remote get-url origin >/dev/null 2>&1; then
+      git -C "$repo_root" push origin "HEAD:${GITOPS_REF:-main}"
+      log_info "GitOps deployment state updated in $repo_root"
     else
-      log_info "No GitOps changes required"
+      log_info "GitOps repository has no configured origin; local commit created at $repo_root"
     fi
   else
     log_info "No GitOps changes required"
   fi
 else
-  log_info "No GitOps repository detected; skipping GitOps update"
+  log_info "No GitOps changes required"
 fi
 
 log_info "GitOps update completed successfully"
