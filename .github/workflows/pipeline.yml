@@ -193,25 +193,6 @@ jobs:
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
 
-
-      - name: Debug Docker Hub secret availability
-        shell: bash
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -n "${DOCKERHUB_USERNAME:-}" ]; then
-            echo "DOCKERHUB_USERNAME: PRESENT"
-          else
-            echo "DOCKERHUB_USERNAME: EMPTY"
-          fi
-
-          if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
-            echo "DOCKERHUB_TOKEN: PRESENT"
-          else
-            echo "DOCKERHUB_TOKEN: EMPTY"
-          fi
-
       - name: Run Container & Supply-Chain provider
         shell: bash
         run: |
@@ -349,7 +330,7 @@ jobs:
 
   gitops:
     needs: [bootstrap, risk_assessment]
-    if: ${{ needs.risk_assessment.outputs.decision == 'promote' }}
+    if: ${{ needs.risk_assessment.outputs.decision == 'promote' || needs.risk_assessment.outputs.decision == 'manual_approval' }}
     runs-on: ubuntu-latest
     env:
       GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
