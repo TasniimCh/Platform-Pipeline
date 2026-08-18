@@ -384,6 +384,11 @@ jobs:
           ref="${{ steps.gitops-meta.outputs.ref }}"
           git clone --branch "$ref" --depth 1 "https://x-access-token:${GITOPS_TOKEN}@github.com/${repo}.git" "$GITHUB_WORKSPACE/gitops-repo"
 
+      - name: Download container reports
+        uses: actions/download-artifact@v4
+        with:
+          name: container-supply-chain-reports
+          path: .devsecops/reports/container
       - name: Resolve runtime image and GitOps values
         shell: bash
         run: |

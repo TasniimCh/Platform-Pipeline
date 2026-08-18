@@ -104,8 +104,32 @@ if caps.get('image_publish'):
     try:
         subprocess.run(['bash', '-lc', f"echo '{dockerhub_token}' | docker login -u '{dockerhub_user}' --password-stdin"], check=True)
         subprocess.run(['docker', 'tag', full_tag, remote_ref], check=True)
-        subprocess.run(['docker', 'push', remote_ref], check=True)
-        repo_digests_raw = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', remote_ref], text=True).strip()
+        push_result = subprocess.run(
+    ['docker', 'push', remote_ref],
+    check=True,
+    capture_output=True,
+    text=True
+)
+
+push_output = push_result.stdout + push_result.stderr
+
+digest = None
+
+for line in push_output.splitlines():
+    if 'digest:' in line:
+        digest = line.split('digest:', 1)[1].strip().split()[0]
+        break
+
+if not digest or not digest.startswith('sha256:'):
+    raise ValueError(
+        f'Unable to resolve registry digest from docker push output:\n{push_output}'
+    )
+
+metadata['image'] = remote_ref
+metadata['image_tag'] = image_tag
+metadata['image_digest'] = digest
+metadata['registry_repository'] = registry_repo
+metadata['published'] = True
         repo_digests = json.loads(repo_digests_raw or '[]')
         digest = None
         if isinstance(repo_digests, list) and repo_digests:
