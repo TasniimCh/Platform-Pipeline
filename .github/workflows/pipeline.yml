@@ -158,6 +158,11 @@ jobs:
 
   supply_chain:
     needs: [bootstrap, build_test, policy_testing]
+
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
     runs-on: ubuntu-latest
     permissions:
       id-token: write
