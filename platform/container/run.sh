@@ -37,11 +37,12 @@ workspace = sys.argv[2]
 result_base = sys.argv[3]
 
 caps = config.get('capabilities', {})
-if not caps.get('container_build') and not caps.get('container_scan') and not caps.get('sbom') and not caps.get('provenance'):
+if not caps.get('container_build') and not caps.get('container_scan') and not caps.get('sbom') and not caps.get('provenance') and not caps.get('image_publish'):
     print('Container capabilities disabled; skipping')
     sys.exit(0)
 
 container_cfg = config.get('container', {})
+registry_cfg = container_cfg.get('registry', {})
 dockerfile = container_cfg.get('dockerfile', './Dockerfile')
 context = container_cfg.get('context', '.')
 image_name = container_cfg.get('image', {}).get('name', 'application')
@@ -50,6 +51,9 @@ if not image_tag:
     # use commit-based tag if available via env
     image_tag = os.environ.get('GITHUB_SHA', '')[:7] or str(int(time.time()))
 full_tag = f"{image_name}:{image_tag}"
+registry_repo = (registry_cfg.get('repository') or '').strip()
+if (registry_cfg.get('type') or '').lower() == 'dockerhub' and not registry_repo:
+    registry_repo = image_name
 
 # Validate dockerfile exists
 dockerfile_path = os.path.join(workspace, dockerfile)
@@ -87,6 +91,40 @@ metadata = {
     'duration_seconds': None,
     'reports': {},
 }
+
+if caps.get('image_publish'):
+    dockerhub_user = (os.environ.get('DOCKERHUB_USERNAME') or '').strip()
+    dockerhub_token = (os.environ.get('DOCKERHUB_TOKEN') or '').strip()
+    if not dockerhub_user or not dockerhub_token:
+        print('DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required when image_publish is true', file=sys.stderr)
+        sys.exit(3)
+
+    remote_ref = f"{registry_repo}:{image_tag}"
+    print(f'Logging into Docker Hub for {registry_repo} and pushing {remote_ref}')
+    try:
+        subprocess.run(['bash', '-lc', f"echo '{dockerhub_token}' | docker login -u '{dockerhub_user}' --password-stdin"], check=True)
+        subprocess.run(['docker', 'tag', full_tag, remote_ref], check=True)
+        subprocess.run(['docker', 'push', remote_ref], check=True)
+        repo_digests_raw = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', remote_ref], text=True).strip()
+        repo_digests = json.loads(repo_digests_raw or '[]')
+        digest = None
+        if isinstance(repo_digests, list) and repo_digests:
+            first = repo_digests[0]
+            if '@' in first:
+                digest = first.split('@', 1)[1]
+            else:
+                digest = first
+        if not digest:
+            raise ValueError('No remote digest found after push')
+        metadata['image'] = remote_ref
+        metadata['image_digest'] = digest
+        metadata['registry_repository'] = registry_repo
+        metadata['published'] = True
+    except Exception as exc:
+        print(f'Image publication failed: {exc}', file=sys.stderr)
+        sys.exit(5)
+else:
+    metadata['published'] = False
 
 # Run Trivy if enabled
 if caps.get('container_scan'):

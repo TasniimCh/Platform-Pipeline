@@ -10,6 +10,7 @@ capabilities:
   container_scan: false
   sbom: false
   provenance: false
+  image_publish: false
   policy_enforcement: false
   gitops_update: false
   image_signing: false

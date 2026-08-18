@@ -148,6 +148,7 @@ Enabling a capability with missing prerequisites causes the corresponding job to
 | `container_scan` | `false` | `container_build: true` | Runs Trivy on the built image |
 | `sbom` | `false` | `container_build: true` | Generates a CycloneDX SBOM via Syft |
 | `provenance` | `false` | `container_build: true` | Generates a SLSA provenance predicate |
+| `image_publish` | `false` | `container_build: true`; `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` available in the client repo | Logs into Docker Hub, pushes the commit-tagged image, and resolves the registry digest for downstream supply-chain evidence |
 | `image_signing` | `false` | `container_build: true`; `id-token: write` permission on the calling workflow; registry must support OCI referrers for keyless mode | Signs the image and provenance attestation with Cosign |
 | `policy_enforcement` | `false` | Kubernetes manifests or Helm chart present in the repo | Runs Conftest against the configured policy paths |
 | `gitops_update` | `false` | GitOps repository write access; risk decision must be `promote` | Updates the image digest in the GitOps repository and triggers ArgoCD sync |
@@ -160,7 +161,7 @@ Enabling a capability with missing prerequisites causes the corresponding job to
 | Secret | Required when |
 |---|---|
 | `SNYK_TOKEN` | `dependency_analysis: true` |
-| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | `container_build: true` |
+| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | `image_publish: true` or `container_build: true` when the flow includes a registry push |
 | GitOps repo credential (TBD, for example `GITOPS_DEPLOY_TOKEN`) | `gitops_update: true` |
 | Cluster access credential (TBD, for example `CLUSTER_ACCESS_TOKEN` or OIDC role ARN) | `cluster_validation: true` |
 

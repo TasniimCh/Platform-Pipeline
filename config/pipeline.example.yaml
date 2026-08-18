@@ -15,7 +15,7 @@ capabilities:
 gitops:
   repository: TasniimCh/MEAN-Client-GitOps
   ref: main
-  values_file: environments/dev/values.yaml
+  values_file: helm/values.yaml
 
 build:
   working_directory: .

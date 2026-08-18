@@ -387,7 +387,7 @@ jobs:
           latest = candidates[-1]
           with open(latest, 'r', encoding='utf-8') as handle:
               payload = json.load(handle)
-          digest = payload.get('image_id') or payload.get('image') or ''
+          digest = payload.get('image_digest') or payload.get('image_id') or payload.get('image') or ''
           if not digest:
               raise SystemExit('Container metadata is missing image identity')
           print(digest)
@@ -402,7 +402,7 @@ jobs:
           latest = candidates[-1]
           with open(latest, 'r', encoding='utf-8') as handle:
               payload = json.load(handle)
-          image_ref = payload.get('image') or ''
+          image_ref = payload.get('registry_repository') or payload.get('image') or ''
           if not image_ref:
               raise SystemExit('Container metadata is missing image reference')
           print(image_ref.split(':', 1)[0])

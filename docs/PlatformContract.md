@@ -94,6 +94,7 @@ The public contract is capability-based. The same platform behavior can be imple
 | `container_scan` | `false` | `container_build: true` | Runs image scanning with Trivy |
 | `sbom` | `false` | `container_build: true` | Produces an SBOM |
 | `provenance` | `false` | `container_build: true` | Produces a provenance predicate |
+| `image_publish` | `false` | `container_build: true`; `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` provided by the client repo | Logs in to Docker Hub, pushes the tagged image, and resolves the remote image digest |
 | `image_signing` | `false` | `container_build: true`, OIDC token permission, registry support for OCI referrers | Signs the image and its provenance attestation |
 | `policy_enforcement` | `false` | Policy files or chart manifests | Runs policy validation before deployment |
 | `gitops_update` | `false` | GitOps repo write access and a valid promotion decision | Updates the image digest in the GitOps repo |
@@ -119,10 +120,11 @@ capabilities:
   build: false
   unit_testing: false
   integration_testing: false
-  container_build: false
-  container_scan: false
-  sbom: false
-  provenance: false
+  container_build: true
+  container_scan: true
+  sbom: true
+  provenance: true
+  image_publish: true
   policy_enforcement: false
   gitops_update: false
   image_signing: false
@@ -150,11 +152,11 @@ container:
   dockerfile: ./Dockerfile
   context: .
   image:
-    name: application
+    name: my-app
     tag: null
   registry:
     type: dockerhub
-    repository: null
+    repository: username/my-app
 
 cluster_validation:
   environment: dev
