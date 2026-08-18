@@ -7,6 +7,11 @@ on:
         required: false
       GITOPS_TOKEN:
         required: false
+      DOCKERHUB_USERNAME:
+        required: false
+
+      DOCKERHUB_TOKEN:
+        required: false
     inputs:
       config-file:
         type : string
