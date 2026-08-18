@@ -95,58 +95,67 @@ metadata = {
 if caps.get('image_publish'):
     dockerhub_user = (os.environ.get('DOCKERHUB_USERNAME') or '').strip()
     dockerhub_token = (os.environ.get('DOCKERHUB_TOKEN') or '').strip()
+
     if not dockerhub_user or not dockerhub_token:
-        print('DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required when image_publish is true', file=sys.stderr)
+        print(
+            'DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required when image_publish is true',
+            file=sys.stderr
+        )
         sys.exit(3)
 
     remote_ref = f"{registry_repo}:{image_tag}"
-    print(f'Logging into Docker Hub for {registry_repo} and pushing {remote_ref}')
+    print(f"Logging into Docker Hub for {registry_repo} and pushing {remote_ref}")
+
     try:
-        subprocess.run(['bash', '-lc', f"echo '{dockerhub_token}' | docker login -u '{dockerhub_user}' --password-stdin"], check=True)
-        subprocess.run(['docker', 'tag', full_tag, remote_ref], check=True)
+        # Login
+        subprocess.run(
+            ['docker', 'login', '-u', dockerhub_user, '--password-stdin'],
+            input=dockerhub_token,
+            text=True,
+            check=True
+        )
+
+        # Tag image for registry
+        subprocess.run(
+            ['docker', 'tag', full_tag, remote_ref],
+            check=True
+        )
+
+        # Push and capture output to resolve the registry digest
         push_result = subprocess.run(
-    ['docker', 'push', remote_ref],
-    check=True,
-    capture_output=True,
-    text=True
-)
+            ['docker', 'push', remote_ref],
+            check=True,
+            capture_output=True,
+            text=True
+        )
 
-push_output = push_result.stdout + push_result.stderr
+        push_output = push_result.stdout + push_result.stderr
 
-digest = None
-
-for line in push_output.splitlines():
-    if 'digest:' in line:
-        digest = line.split('digest:', 1)[1].strip().split()[0]
-        break
-
-if not digest or not digest.startswith('sha256:'):
-    raise ValueError(
-        f'Unable to resolve registry digest from docker push output:\n{push_output}'
-    )
-
-metadata['image'] = remote_ref
-metadata['image_tag'] = image_tag
-metadata['image_digest'] = digest
-metadata['registry_repository'] = registry_repo
-metadata['published'] = True
-        repo_digests = json.loads(repo_digests_raw or '[]')
         digest = None
-        if isinstance(repo_digests, list) and repo_digests:
-            first = repo_digests[0]
-            if '@' in first:
-                digest = first.split('@', 1)[1]
-            else:
-                digest = first
-        if not digest:
-            raise ValueError('No remote digest found after push')
+        for line in push_output.splitlines():
+            if 'digest:' in line:
+                digest = line.split('digest:', 1)[1].strip().split()[0]
+                break
+
+        if not digest or not digest.startswith('sha256:'):
+            raise ValueError(
+                f"Unable to resolve registry digest from docker push output:\n{push_output}"
+            )
+
+        # Store published image identity
         metadata['image'] = remote_ref
+        metadata['image_tag'] = image_tag
         metadata['image_digest'] = digest
         metadata['registry_repository'] = registry_repo
         metadata['published'] = True
+
+        print(f"Published image: {remote_ref}")
+        print(f"Registry digest: {digest}")
+
     except Exception as exc:
         print(f'Image publication failed: {exc}', file=sys.stderr)
         sys.exit(5)
+
 else:
     metadata['published'] = False
 
