@@ -96,6 +96,34 @@ kubectl create namespace "$TARGET_NAMESPACE" \
     --dry-run=client \
     -o yaml | kubectl apply -f -
 
+
+log_info "Retrieving Argo CD admin credentials"
+
+ARGO_PASSWORD="$(
+    kubectl -n argocd get secret argocd-initial-admin-secret \
+        -o jsonpath='{.data.password}' | base64 -d
+)"
+
+kubectl -n argocd port-forward svc/argocd-server 8080:443 \
+    >/tmp/argocd-port-forward.log 2>&1 &
+
+ARGO_PORT_FORWARD_PID=$!
+
+cleanup() {
+    kill "$ARGO_PORT_FORWARD_PID" >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT
+
+sleep 5
+
+log_info "Logging into Argo CD"
+
+argocd login localhost:8080 \
+    --username admin \
+    --password "$ARGO_PASSWORD" \
+    --insecure
+
 log_info "Configuring private GitOps repository in Argo CD"
 
 argocd repo add "$GITOPS_URL" \
@@ -126,33 +154,6 @@ EOF
 kubectl apply -f /tmp/argocd-application.yaml
 
 log_info "Argo CD Application created"
-
-log_info "Retrieving Argo CD admin credentials"
-
-ARGO_PASSWORD="$(
-    kubectl -n argocd get secret argocd-initial-admin-secret \
-        -o jsonpath='{.data.password}' | base64 -d
-)"
-
-kubectl -n argocd port-forward svc/argocd-server 8080:443 \
-    >/tmp/argocd-port-forward.log 2>&1 &
-
-ARGO_PORT_FORWARD_PID=$!
-
-cleanup() {
-    kill "$ARGO_PORT_FORWARD_PID" >/dev/null 2>&1 || true
-}
-
-trap cleanup EXIT
-
-sleep 5
-
-log_info "Logging into Argo CD"
-
-argocd login localhost:8080 \
-    --username admin \
-    --password "$ARGO_PASSWORD" \
-    --insecure
 
 log_info "Starting explicit Argo CD synchronization"
 
