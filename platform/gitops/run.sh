@@ -220,8 +220,27 @@ EOF
 
     git -C "$repo_root" -c user.name="$author_name" -c user.email="$author_email" commit -m "$commit_title" -m "$commit_body"
     if git -C "$repo_root" remote get-url origin >/dev/null 2>&1; then
-      git -C "$repo_root" push origin "HEAD:${GITOPS_REF:-main}"
-      log_info "GitOps deployment state updated in $repo_root"
+
+        if [ -z "${GITOPS_TOKEN:-}" ]; then
+            log_error "GITOPS_TOKEN is required for GitOps push"
+            exit "$PLATFORM_EXIT_EXECUTION"
+        fi
+
+        remote_url="$(git -C "$repo_root" remote get-url origin)"
+
+        if [[ "$remote_url" =~ github.com/([^/]+/[^/.]+)(\.git)?$ ]]; then
+            gitops_repo="${BASH_REMATCH[1]}"
+        else
+            log_error "Unable to determine GitHub repository from origin URL"
+            exit "$PLATFORM_EXIT_EXECUTION"
+        fi
+
+        git -C "$repo_root" remote set-url origin \
+            "https://x-access-token:${GITOPS_TOKEN}@github.com/${gitops_repo}.git"
+
+        git -C "$repo_root" push origin "HEAD:${GITOPS_REF:-main}"
+
+        log_info "GitOps deployment state updated in $repo_root"
     else
       log_info "GitOps repository has no configured origin; local commit created at $repo_root"
     fi
