@@ -37,7 +37,8 @@ kubectl create namespace argocd \
     --dry-run=client \
     -o yaml | kubectl apply -f -
 
-kubectl apply -n argocd \
+kubectl apply --server-side \
+    -n argocd \
     -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
 log_info "Waiting for Argo CD components"
@@ -52,12 +53,6 @@ kubectl wait \
     --namespace argocd \
     --for=condition=Available \
     deployment/argocd-repo-server \
-    --timeout=180s
-
-kubectl wait \
-    --namespace argocd \
-    --for=condition=Available \
-    deployment/argocd-server \
     --timeout=180s
 
 log_info "Argo CD installed successfully"
