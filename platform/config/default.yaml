@@ -3,19 +3,25 @@ capabilities:
   static_analysis: true
   dependency_analysis: true
   infrastructure_analysis: true
+
   build: false
   unit_testing: false
   integration_testing: false
+
   container_build: false
   container_scan: false
   sbom: false
   provenance: false
   image_publish: false
-  policy_enforcement: false
-  gitops_update: false
   image_signing: false
+
+  policy_enforcement: false
+
+  gitops_update: false
+
   admission_control: false
   cluster_validation: false
+
 
 build:
   working_directory: .
@@ -25,6 +31,7 @@ build:
     package_manager: null
   command: null
 
+
 testing:
   working_directory: .
   unit:
@@ -33,6 +40,7 @@ testing:
   integration:
     enabled: false
     command: null
+
 
 container:
   dockerfile: ./Dockerfile
@@ -44,15 +52,58 @@ container:
     type: dockerhub
     repository: null
 
+
+gitops:
+  repository: null
+  ref: main
+  values_file: null
+
+  argocd:
+    application_name: null
+    path: null
+    namespace: dev
+    project: default
+    sync_policy: manual
+
+  commit:
+    author_name: Platform Bot
+    author_email: platform@example.com
+
+
 cluster_validation:
+  enabled: true
   environment: dev
+  namespace: dev
+
+  argocd:
+    enabled: true
+    application_name: null
+    timeout_seconds: 180
+
+  admission:
+    enabled: true
+    engine: kyverno
+    enforce: true
+
+    image_verification:
+      enabled: true
+      keyless:
+        issuer: https://token.actions.githubusercontent.com
+        subject_regexp: null
+
   rollout:
+    enabled: true
+    deployment: null
     timeout_seconds: 180
     poll_interval_seconds: 5
+
   smoke_tests:
     enabled: true
+    service: null
+    port: 80
+    path: /health
     timeout_seconds: 120
-    command: null
+
 
 policy:
   paths: []

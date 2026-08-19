@@ -95,3 +95,92 @@ V0
 |  `3` | `DEPENDENCY_ERROR`    | Scanner/tool unavailable                      |
 |  `4` | `FINDINGS_DETECTED`   | Vulnerabilities/secrets detected              |
 |  `5` | `EXECUTION_ERROR`     | Scanner crashed / invalid CLI / runtime error |
+
+
+
+                    ┌─────────────────────┐
+                    │ Developer           │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────┐
+│              PLATFORM / DEVSECOPS CI                │
+│                                                     │
+│ Build & Test                                        │
+│      ↓                                              │
+│ Policy Testing                                      │
+│      ↓                                              │
+│ Container Build                                     │
+│      ↓                                              │
+│ SAST / SCA / Secrets / IaC / Container Scan        │
+│      ↓                                              │
+│ SBOM + Provenance                                   │
+│      ↓                                              │
+│ Publish image                                       │
+│      ↓                                              │
+│ Resolve immutable digest                            │
+│      ↓                                              │
+│ AI Risk Advisor                                     │
+└──────────────────────┬──────────────────────────────┘
+                       │
+              promote / approval
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│                  GITOPS PROVIDER                    │
+│                                                     │
+│ Update Helm/Kustomize configuration                 │
+│ repository + immutable image digest                 │
+│ Commit audit information                            │
+│ Push desired state                                  │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       ▼
+              ┌────────────────┐
+              │ GitOps Repo    │
+              │ Source of Truth│
+              └───────┬────────┘
+                      │
+                      ▼
+              ┌────────────────┐
+              │ Argo CD        │
+              │ Reconciliation │
+              └───────┬────────┘
+                      │
+                      ▼
+       ┌──────────────────────────────┐
+       │ Kubernetes API Server        │
+       │                              │
+       │ Admission Control            │
+       │ Kyverno / OPA Gatekeeper     │
+       │ - signatures                 │
+       │ - provenance                 │
+       │ - security policies          │
+       │ - Pod Security Standards     │
+       └──────────────┬───────────────┘
+                      │
+                    ALLOW
+                      │
+                      ▼
+          ┌───────────────────────┐
+          │ Environment           │
+          │ DEV / STAGING / PROD  │
+          └───────────┬───────────┘
+                      │
+          ┌───────────┴────────────┐
+          ▼                        ▼
+   Rollout validation        Runtime validation
+   kubectl rollout           Smoke / DAST /
+   status                    performance
+          │                        │
+          └───────────┬────────────┘
+                      ▼
+                  SUCCESS?
+                 /        \
+               YES         NO
+                │           │
+                ▼           ▼
+           Promote next   GitOps revert
+           environment       │
+                              ▼
+                         Argo CD rollback

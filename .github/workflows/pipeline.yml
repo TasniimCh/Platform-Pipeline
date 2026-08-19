@@ -468,12 +468,10 @@ jobs:
     needs: [bootstrap, gitops]
     if: ${{ always() && needs.gitops.result == 'success' }}
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+
     env:
-      # TBD: final cluster credential name to be agreed with platform ops.
-      KUBECONFIG: ${{ secrets.KUBECONFIG }}
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -485,24 +483,44 @@ jobs:
           ref: risk-advisor
           path: platform
 
+      - name: Create ephemeral kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: pipeline-validation
+          wait: 120s
+
+      - name: Verify cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl cluster-info
+          kubectl get nodes
+
       - name: Install required tools
         shell: bash
         run: |
           set -euo pipefail
+
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
+
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
+            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
 
       - name: Run cluster validation provider
         shell: bash
         run: |
           set -euo pipefail
+
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export GITOPS_TOKEN="${GITOPS_TOKEN}"
+
           bash "${{ github.workspace }}/platform/platform/cluster-validation/run.sh"
 
       - name: Upload cluster validation report

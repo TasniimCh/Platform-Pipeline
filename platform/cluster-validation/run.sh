@@ -40,8 +40,22 @@ if ! is_capability_enabled "admission_control" "$WORKSPACE" "$CONFIG_FILE"; then
   log_info "Admission control not enabled; cluster validation still runs with deployment smoke checks only"
 fi
 
+log_info "Phase 1: Install Argo CD"
+"$SCRIPT_DIR/install-argocd.sh"
+
+log_info "Phase 2: Install Kyverno admission controller"
+"$SCRIPT_DIR/install-kyverno.sh"
+
+log_info "Phase 3: Apply admission policies"
 "$SCRIPT_DIR/admission.sh"
+
+log_info "Phase 4: Explicit Argo CD synchronization"
+"$SCRIPT_DIR/sync-argocd.sh"
+
+log_info "Phase 5: Rollout validation"
 "$SCRIPT_DIR/rollout.sh"
+
+log_info "Phase 6: Smoke tests"
 "$SCRIPT_DIR/smoke-tests.sh"
 
 cat > "$RESULT_BASE/summary.json" <<'EOF'
@@ -50,6 +64,8 @@ cat > "$RESULT_BASE/summary.json" <<'EOF'
   "status": "passed",
   "environment": "dev",
   "phases": [
+    "argocd_install",
+    "argocd_sync",
     "admission",
     "rollout",
     "smoke_tests"

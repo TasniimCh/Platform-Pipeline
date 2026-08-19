@@ -3,49 +3,114 @@ capabilities:
   static_analysis: true
   dependency_analysis: true
   infrastructure_analysis: true
-  build: false
-  unit_testing: false
-  integration_testing: false
-  policy_enforcement: false
-  gitops_update: false
-  image_signing: false
-  admission_control: false
-  cluster_validation: false
 
-gitops:
-  repository: TasniimCh/MEAN-Client-GitOps
-  ref: main
-  values_file: helm/values.yaml
+  build: true
+  unit_testing: true
+
+  container_build: true
+  container_scan: true
+  sbom: true
+  provenance: true
+  image_publish: true
+  image_signing: true
+
+  policy_enforcement: true
+  gitops_update: true
+
+  admission_control: true
+  cluster_validation: true
+
 
 build:
   working_directory: .
   runtime:
     language: node
     version: "22"
-    package_manager: null
-  command: null
+    package_manager: npm
+  command: npm run build
+
 
 testing:
   working_directory: .
   unit:
     enabled: true
-    command: null
+    command: npm test
+
   integration:
     enabled: false
     command: null
 
+
 container:
   dockerfile: ./Dockerfile
   context: .
+
   image:
-    name: application
+    name: mean-client
     tag: null
+
   registry:
     type: dockerhub
-    repository: null
+    repository: tasniimch/mean-client
+
+
+gitops:
+  repository: TasniimCh/MEAN-GitOps
+  ref: main
+
+  values_file: environments/dev/values.yaml
+
+  argocd:
+    application_name: mean-client-dev
+    path: environments/dev
+    namespace: dev
+    project: default
+    sync_policy: manual
+
+  commit:
+    author_name: Platform Bot
+    author_email: platform@example.com
+
+
+cluster_validation:
+  enabled: true
+  environment: dev
+  namespace: dev
+
+  argocd:
+    enabled: true
+    application_name: mean-client-dev
+    timeout_seconds: 180
+
+  admission:
+    enabled: true
+    engine: kyverno
+    enforce: true
+
+    image_verification:
+      enabled: true
+
+      keyless:
+        issuer: https://token.actions.githubusercontent.com
+        subject_regexp: "https://github\\.com/TasniimCh/MEAN-Client-Repo/.github/workflows/.*"
+
+  rollout:
+    enabled: true
+    deployment: mean-client
+    timeout_seconds: 180
+    poll_interval_seconds: 5
+
+  smoke_tests:
+    enabled: true
+    service: mean-client
+    port: 80
+    path: /health
+    timeout_seconds: 120
+
 
 policy:
   paths:
-    - deploy/
+    - .devsecops/policies
+
   policy_paths:
-    - .devsecops/policies/
+    - .devsecops/policies
