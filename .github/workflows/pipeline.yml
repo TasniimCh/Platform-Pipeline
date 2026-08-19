@@ -451,7 +451,7 @@ jobs:
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           export GITOPS_REPO_PATH="$GITHUB_WORKSPACE/gitops-repo"
           export GITOPS_VALUES_FILE="${{ steps.gitops-meta.outputs.values_file }}"
-          export GITOPS_DECISION="promote"
+          export GITOPS_DECISION=promote
           export IMAGE_REPOSITORY="$IMAGE_REPOSITORY"
           export IMAGE_DIGEST="$IMAGE_DIGEST"
           export GITOPS_REF="${{ steps.gitops-meta.outputs.ref }}"
