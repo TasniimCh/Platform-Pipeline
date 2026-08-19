@@ -59,9 +59,9 @@ decision = str(
     or "promote"
 ).strip().lower()
 
-if decision != "promote":
-    raise SystemExit(
-        "GitOps update requires a 'promote' decision; 'manual_approval' is not automatic."
+if decision not in ("promote", "manual_approval"):
+     raise SystemExit(
+        f"GitOps update requires a valid decision; received '{decision}'."
     )
 
 repo_path = str(os.environ.get("GITOPS_REPO_PATH") or gitops.get("repo_path") or "").strip()
