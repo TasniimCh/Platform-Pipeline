@@ -30,6 +30,17 @@ config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE") || {
     exit "$PLATFORM_EXIT_CONFIG"
 }
 
+log_info "++++++++++++++++++++++"
+
+log_info "=== Deployments in namespace $NAMESPACE ==="
+kubectl get deployments -n "$NAMESPACE" -o wide
+
+log_info "=== All resources in namespace $NAMESPACE ==="
+kubectl get all -n "$NAMESPACE"
+
+log_info "++++++++++++++++++++++"
+
+
 ROLLOUT_OUTPUT=$(
     CONFIG_JSON="$config_json" python3 - <<'PY'
 import json
@@ -73,16 +84,6 @@ DEPLOYMENT="${ROLLOUT_CONFIG[1]}"
 TIMEOUT="${ROLLOUT_CONFIG[2]}"
 
 log_info "Phase 5: Rollout validation"
-
-log_info "++++++++++++++++++++++"
-
-log_info "=== Deployments in namespace $NAMESPACE ==="
-kubectl get deployments -n "$NAMESPACE" -o wide
-
-log_info "=== All resources in namespace $NAMESPACE ==="
-kubectl get all -n "$NAMESPACE"
-
-log_info "++++++++++++++++++++++"
 
 
 log_info "Validating deployment: $DEPLOYMENT"
