@@ -30,7 +30,7 @@ config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE") || {
     exit "$PLATFORM_EXIT_CONFIG"
 }
 
-readarray -t ROLLOUT_CONFIG < <(
+ROLLOUT_OUTPUT=$(
     CONFIG_JSON="$config_json" python3 - <<'PY'
 import json
 import os
@@ -38,22 +38,12 @@ import sys
 
 cfg = json.loads(os.environ.get("CONFIG_JSON", "{}"))
 
-validation = cfg.get("cluster_validation", {})
-rollout = validation.get("rollout", {})
+validation = cfg.get("cluster_validation") or {}
+rollout = validation.get("rollout") or {}
 
-namespace = str(
-    validation.get("namespace") or "dev"
-).strip()
-
-deployment = rollout.get("deployment")
-if deployment is None:
-    deployment = ""
-else:
-    deployment = str(deployment).strip()
-
-timeout = str(
-    rollout.get("timeout") or "180"
-).strip()
+namespace = str(validation.get("namespace") or "dev").strip()
+deployment = str(rollout.get("deployment") or "").strip()
+timeout = str(rollout.get("timeout") or "180").strip()
 
 if not deployment:
     print(
@@ -66,7 +56,17 @@ print(namespace)
 print(deployment)
 print(timeout)
 PY
-)
+) || {
+    log_error "Failed to resolve rollout configuration"
+    exit "$PLATFORM_EXIT_CONFIG"
+}
+
+readarray -t ROLLOUT_CONFIG <<< "$ROLLOUT_OUTPUT"
+
+if [ "${#ROLLOUT_CONFIG[@]}" -ne 3 ]; then
+    log_error "Invalid rollout configuration: expected namespace, deployment and timeout"
+    exit "$PLATFORM_EXIT_CONFIG"
+fi
 
 NAMESPACE="${ROLLOUT_CONFIG[0]}"
 DEPLOYMENT="${ROLLOUT_CONFIG[1]}"
