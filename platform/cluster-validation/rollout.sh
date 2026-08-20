@@ -148,18 +148,17 @@ for item in data.get("items", []):
     name = item["metadata"]["name"]
 
     for container in item.get("status", {}).get("containerStatuses", []):
-        state = container.get("state", {})
+        waiting = container.get("state", {}).get("waiting")
 
-        waiting = state.get("waiting")
+        if waiting:
+            reason = waiting.get("reason")
 
-        if waiting and waiting.get("reason") in {
-            "CrashLoopBackOff",
-            "ImagePullBackOff",
-            "ErrImagePull",
-        }:
-            bad.append(
-                f"{name}: {waiting.get(\"reason\")}"
-            )
+            if reason in {
+                "CrashLoopBackOff",
+                "ImagePullBackOff",
+                "ErrImagePull",
+            }:
+                bad.append(f"{name}: {reason}")
 
 if bad:
     print("\n".join(bad))
