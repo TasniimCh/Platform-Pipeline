@@ -162,10 +162,40 @@ argocd app sync "$ARGO_APP" \
 
 log_info "Waiting for Argo CD application to become healthy"
 
-argocd app wait "$ARGO_APP" \
+if ! argocd app wait "$ARGO_APP" \
     --sync \
     --health \
-    --timeout 180
+    --timeout 180; then
+
+    log_error "Argo CD application failed to become healthy"
+
+    log_info "=== Argo CD Application ==="
+    argocd app get "$ARGO_APP"
+
+    log_info "=== Deployments ==="
+    kubectl get deployments -n "$TARGET_NAMESPACE" -o wide
+
+    log_info "=== Pods ==="
+    kubectl get pods -n "$TARGET_NAMESPACE" -o wide
+
+    log_info "=== Services ==="
+    kubectl get services -n "$TARGET_NAMESPACE" -o wide
+
+    log_info "=== Deployment description ==="
+    kubectl describe deployment "$ARGO_APP" -n "$TARGET_NAMESPACE" || true
+
+    log_info "=== Pod descriptions ==="
+    kubectl describe pods -n "$TARGET_NAMESPACE" || true
+
+    log_info "=== Pod logs ==="
+    kubectl logs \
+        -n "$TARGET_NAMESPACE" \
+        -l "app.kubernetes.io/name=$ARGO_APP" \
+        --all-containers \
+        --tail=200 || true
+
+    exit "$PLATFORM_EXIT_FAILURE"
+fi
 
 SYNC_STATUS="$(argocd app get "$ARGO_APP" -o json | python3 -c '
 import json
