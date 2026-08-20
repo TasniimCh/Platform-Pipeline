@@ -42,15 +42,17 @@ validation = cfg.get("cluster_validation", {})
 rollout = validation.get("rollout", {})
 
 namespace = str(
-    validation.get("namespace", "dev")
+    validation.get("namespace") or "dev"
 ).strip()
 
-deployment = str(
-    rollout.get("deployment", "")
-).strip()
+deployment = rollout.get("deployment")
+if deployment is None:
+    deployment = ""
+else:
+    deployment = str(deployment).strip()
 
 timeout = str(
-    rollout.get("timeout", "180")
+    rollout.get("timeout") or "180"
 ).strip()
 
 if not deployment:
