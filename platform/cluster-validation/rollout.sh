@@ -43,7 +43,7 @@ rollout = validation.get("rollout") or {}
 
 namespace = str(validation.get("namespace") or "dev").strip()
 deployment = str(rollout.get("deployment") or "").strip()
-timeout = str(rollout.get("timeout") or "180").strip()
+timeout = str(rollout.get("timeout_seconds") or "180").strip()
 
 if not deployment:
     print(
@@ -71,6 +71,19 @@ fi
 NAMESPACE="${ROLLOUT_CONFIG[0]}"
 DEPLOYMENT="${ROLLOUT_CONFIG[1]}"
 TIMEOUT="${ROLLOUT_CONFIG[2]}"
+
+log_info "Phase 5: Rollout validation"
+
+log_info "++++++++++++++++++++++"
+
+log_info "=== Deployments in namespace $NAMESPACE ==="
+kubectl get deployments -n "$NAMESPACE" -o wide
+
+log_info "=== All resources in namespace $NAMESPACE ==="
+kubectl get all -n "$NAMESPACE"
+
+log_info "++++++++++++++++++++++"
+
 
 log_info "Validating deployment: $DEPLOYMENT"
 log_info "Namespace: $NAMESPACE"
