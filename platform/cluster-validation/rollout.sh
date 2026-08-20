@@ -31,12 +31,11 @@ config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE") || {
 }
 
 log_info "++++++++++++++++++++++"
+log_info "=== Deployments in namespace dev ==="
+kubectl get deployments -n dev -o wide || true
 
-log_info "=== Deployments in namespace $NAMESPACE ==="
-kubectl get deployments -n "$NAMESPACE" -o wide
-
-log_info "=== All resources in namespace $NAMESPACE ==="
-kubectl get all -n "$NAMESPACE"
+log_info "=== All resources in namespace dev ==="
+kubectl get all -n dev || true
 
 log_info "++++++++++++++++++++++"
 
