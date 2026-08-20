@@ -151,10 +151,11 @@ for item in data.get("items", []):
         state = container.get("state", {})
 
         waiting = state.get("waiting")
+
         if waiting and waiting.get("reason") in {
             "CrashLoopBackOff",
             "ImagePullBackOff",
-            "ErrImagePull"
+            "ErrImagePull",
         }:
             bad.append(
                 f"{name}: {waiting.get(\"reason\")}"
