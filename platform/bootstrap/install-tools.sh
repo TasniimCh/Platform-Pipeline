@@ -395,12 +395,12 @@ else
   log_warn "No tools to install for this job (capability disabled, or filtered out)"
 fi
 
-# A filtered installation request only installs the requested tools.
-# Do not evaluate/install unrelated platform capabilities.
-if [ "$filter_provided" -eq 1 ]; then
-  log_info "Filtered tool installation completed: $tool_filter"
-  return 0
-fi
+  # A filtered installation request only installs the requested tools.
+  # Do not evaluate/install unrelated platform capabilities.
+  if [ "$filter_provided" -eq 1 ]; then
+    log_info "Filtered tool installation completed: $tool_filter"
+    return 0
+  fi
 
 
 
@@ -468,6 +468,7 @@ PY
 fi
 
 log_info "has_container='$has_container'"
+}
 
 main() {
   echo "DEFAULT_CONFIG=$DEFAULT_CONFIG"
