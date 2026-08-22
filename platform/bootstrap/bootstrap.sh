@@ -52,18 +52,20 @@ prepare_report_directory() {
 }
 
 validate_configuration() {
-  log_debug "Validating platform configuration"
-  local config_path="$WORKSPACE/$CONFIG_FILE"
+log_debug "Validating platform configuration"
+local config_path="$WORKSPACE/$CONFIG_FILE"
 
-  if [ ! -f "$config_path" ]; then
-    log_info "No client configuration found at '$config_path'; using platform defaults"
-    return 0
-  fi
+if [ ! -f "$config_path" ]; then
+log_info "No client configuration found at '$config_path'; using platform defaults"
+return 0
+fi
 
-  if ! bash "$PLATFORM_ROOT/config/validate.sh" "$config_path"; then
-    log_error "Platform configuration validation failed for '$config_path'"
-    exit $PLATFORM_EXIT_CONFIG
-  fi
+command -v pip3 >/dev/null 2>&1 && pip3 install --user --quiet pyyaml
+
+if ! bash "$PLATFORM_ROOT/config/validate.sh" "$config_path"; then
+log_error "Platform configuration validation failed for '$config_path'"
+exit $PLATFORM_EXIT_CONFIG
+fi
 }
 
 bootstrap() {

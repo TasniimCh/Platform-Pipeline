@@ -9,30 +9,48 @@ on:
         required: false
       DOCKERHUB_USERNAME:
         required: false
-
       DOCKERHUB_TOKEN:
         required: false
     inputs:
       config-file:
-        type : string
+        type: string
         required: false
         default: .devsecops/pipeline.yaml
       report-directory:
-        type : string
+        type: string
         required: false
         default: .devsecops/reports
       log-level:
-        type : string
+        type: string
         required: false
         default: info
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 0 — bootstrap: checkout, minimal env setup, and — crucially —
+  # resolve the client config ONCE via the platform repo's own
+  # load_merged_config_json()/enabled_scanner_tools() (default.yaml +
+  # client config + capabilities.yaml merge), and expose the result as
+  # job outputs. Every later job reads these outputs instead of
+  # re-merging the YAML itself, and gates itself with `if:`. This keeps
+  # exactly one implementation of the merge/precedence logic, shared by
+  # the workflow-level gating and by each phase script's own internal checks.
+  # ──────────────────────────────────────────────────────────────────
   bootstrap:
     runs-on: ubuntu-latest
     outputs:
       config-file: ${{ steps.set-vars.outputs.config-file }}
       report-directory: ${{ steps.set-vars.outputs.report-directory }}
       log-level: ${{ steps.set-vars.outputs.log-level }}
+      # Single source of truth: the merged (default + client + capabilities-map)
+      # capabilities object, exactly as produced by platform/lib/config.sh's
+      # load_merged_config_json(). Every downstream job reads specific keys
+      # via fromJson(needs.bootstrap.outputs.capabilities).<key> instead of
+      # each job re-parsing/re-merging the YAML itself.
+      capabilities: ${{ steps.flags.outputs.capabilities }}
+      build_stage: ${{ steps.flags.outputs.build_stage }}
+      container_stage: ${{ steps.flags.outputs.container_stage }}
+      code_scanners: ${{ steps.flags.outputs.code_scanners }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,9 +58,9 @@ jobs:
       - name: Set required variables
         id: set-vars
         run: |
-          echo "config-file=${{ inputs.config-file }}" >> $GITHUB_OUTPUT
-          echo "report-directory=${{ inputs.report-directory }}" >> $GITHUB_OUTPUT
-          echo "log-level=${{ inputs.log-level }}" >> $GITHUB_OUTPUT
+          echo "config-file=${{ inputs.config-file }}" >> "$GITHUB_OUTPUT"
+          echo "report-directory=${{ inputs.report-directory }}" >> "$GITHUB_OUTPUT"
+          echo "log-level=${{ inputs.log-level }}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout platform repository
         uses: actions/checkout@v4
@@ -56,26 +74,184 @@ jobs:
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ inputs.config-file }}"
-          export REPORT_DIR="${{ inputs.report-directory }}"
-          export LOG_LEVEL="${{ inputs.log-level }}"
+          export CONFIG_FILE="${{ steps.set-vars.outputs.config-file }}"
+          export REPORT_DIR="${{ steps.set-vars.outputs.report-directory }}"
+          export LOG_LEVEL="${{ steps.set-vars.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/bootstrap/bootstrap.sh"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ inputs.config-file }}"
 
-  build_test:
+      - name: Resolve capability flags from client config
+        id: flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ steps.set-vars.outputs.config-file }}"
+
+          # config.sh lives in config/, next to default.yaml and capabilities.yaml
+          # (PLATFORM_ROOT/config/config.sh — see bootstrap.sh / install-tools.sh,
+          # both of which source it the same way).
+          # Nothing before this point installs PyYAML — bootstrap.sh only validates
+          # and prepares the environment, and install-tools.sh (which does
+          # `install_python_package pyyaml`) hasn't run yet at this stage — so
+          # install it explicitly before sourcing config.sh, which needs `import yaml`.
+          pip3 install --user --quiet pyyaml
+
+          source "${{ github.workspace }}/platform/platform/config/config.sh"
+
+          # Merge default.yaml + client config + capabilities.yaml exactly once —
+          # this is the same merge every phase script already uses internally,
+          # so the workflow-level gating and each script's own internal check
+          # can never disagree.
+          CONFIG_JSON="$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE")"
+          SCANNER_TOOLS="$(enabled_scanner_tools "$WORKSPACE" "$CONFIG_FILE")"
+
+          CONFIG_JSON="$CONFIG_JSON" SCANNER_TOOLS="$SCANNER_TOOLS" python3 - <<'PY'
+          import json, os
+
+          config = json.loads(os.environ["CONFIG_JSON"])
+          caps = config.get("capabilities", {}) or {}
+
+          def flag(name):
+              return bool(caps.get(name, False))
+
+          # Derived flags: a job that groups several capabilities (build_test
+          # covers build/unit_testing/integration_testing; supply_chain covers
+          # every container-related capability) needs a single boolean, computed
+          # once here rather than repeated as an OR-chain in every job's `if:`.
+          build_stage = flag("build") or flag("unit_testing") or flag("integration_testing")
+          container_stage = any(
+              flag(k) for k in
+              ["container_build", "container_scan", "sbom", "provenance", "image_signing", "image_publish"]
+          )
+
+          # enabled_scanner_tools() returns every enabled capability's mapped tool
+          # name (from capabilities.yaml), including non-scanner ones like
+          # dockerhub/cosign/kyverno. Keep only the tools the code_scans matrix
+          # actually runs; gitleaks is deliberately excluded — it has its own
+          # dedicated fail-fast job, not a matrix entry.
+          all_tools = os.environ.get("SCANNER_TOOLS", "").split()
+          code_scanners = [t for t in all_tools if t in ("semgrep", "snyk", "checkov")]
+
+          outputs = {
+              "capabilities": json.dumps(caps),
+              "build_stage": str(build_stage).lower(),
+              "container_stage": str(container_stage).lower(),
+              "code_scanners": json.dumps(code_scanners),
+          }
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              for k, v in outputs.items():
+                  fh.write(f"{k}={v}\n")
+          PY
+
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 1 — secret scan: the ONLY hard fail-fast gate (per the design
+  # doc). Runs alone, first, fast. If it fails, every job below that
+  # checks `needs.secret_scan.result != 'failure'` skips automatically —
+  # true fail-fast, unlike V0 where gitleaks ran last, after build and
+  # container steps had already spent their time and compute.
+  # ──────────────────────────────────────────────────────────────────
+  secret_scan:
     needs: bootstrap
+    if: fromJson(needs.bootstrap.outputs.capabilities).secret_detection == true
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
+      - name: Install scanner tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "gitleaks"
+      - name: Run secret scan (fail-fast — this job is allowed to fail the run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/platform/scanners/run-scanner.sh" gitleaks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-secret-scan
+          path: .devsecops/reports/gitleaks
+          if-no-files-found: warn
 
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 2 — everything here is independent of everything else in this
+  # stage: they only share the secret-scan gate. All five run in
+  # parallel instead of the V0 chain (build_test → policy → supply
+  # chain → scanners). Each is individually capability-gated so a
+  # client with e.g. build:false and policy_enforcement:false never
+  # pays for those jobs and never needs their tooling.
+  # ──────────────────────────────────────────────────────────────────
+  code_scans:
+    needs: [bootstrap, secret_scan]
+    if: |
+      always() && needs.bootstrap.result == 'success' &&
+      needs.secret_scan.result != 'failure' &&
+      needs.bootstrap.outputs.code_scanners != '[]'
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        scanner: ${{ fromJson(needs.bootstrap.outputs.code_scanners) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: TasniimCh/Platform-Pipeline
+          ref: risk-advisor
+          path: platform
+      - name: Install scanner tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "${{ matrix.scanner }}"
+      - name: Run scanner (must exit 0 on findings — only tool crashes should fail this job)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ matrix.scanner }}
+          path: .devsecops/reports/${{ matrix.scanner }}
+          if-no-files-found: warn
+
+  build_test:
+    needs: [bootstrap, secret_scan]
+    if: |
+      always() && needs.bootstrap.result == 'success' &&
+      needs.secret_scan.result != 'failure' &&
+      needs.bootstrap.outputs.build_stage == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: TasniimCh/Platform-Pipeline
+          ref: risk-advisor
+          path: platform
       - name: Install required tools
         shell: bash
         run: |
@@ -84,8 +260,12 @@ jobs:
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
-
+          # No scanner/policy/container tool applies to build & test — pass an
+          # explicit empty filter so only the unconditional PyYAML install runs.
+          # If build-test/run.sh handles its own runtime/package-manager setup
+          # (node version, etc.), this step can likely be dropped entirely —
+          # confirm against that script's actual requirements.
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" ""
       - name: Run Build & Test provider
         shell: bash
         run: |
@@ -95,94 +275,81 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/build-test/run.sh"
-
-      - name: Upload Build & Test reports
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: build-test-reports
+          name: report-build-test
           path: .devsecops/reports/build
           if-no-files-found: warn
-
-      - name: Upload Test reports
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: test-reports
+          name: report-tests
           path: .devsecops/reports/tests
           if-no-files-found: warn
 
   policy_testing:
-    needs: [bootstrap,build_test]
+    needs: [bootstrap, secret_scan]
+    if: |
+      always() && needs.bootstrap.result == 'success' &&
+      needs.secret_scan.result != 'failure' &&
+      fromJson(needs.bootstrap.outputs.capabilities).policy_enforcement == true
     runs-on: ubuntu-latest
-
     steps:
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
-
       - name: Install required tools
         shell: bash
         run: |
-           set -euo pipefail
-
-           export WORKSPACE="$GITHUB_WORKSPACE"
-           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-
-           export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-
-           bash "${GITHUB_WORKSPACE}/platform/platform/bootstrap/install-tools.sh" \
-             "${GITHUB_WORKSPACE}/${CONFIG_FILE}"
-
-      - name: Run CI Policy Testing provider
-        shell: bash
-        run: |
           set -euo pipefail
-
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-
-          export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-
-          bash "${GITHUB_WORKSPACE}/platform/platform/policy/run.sh"
-      - name: Upload CI Policy Testing reports
-        uses: actions/upload-artifact@v4
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "conftest"
+      - name: Run CI Policy Testing provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/platform/policy/run.sh"
+      - uses: actions/upload-artifact@v4
         with:
-          name: policy-testing-reports
+          name: report-policy
           path: .devsecops/reports/policy
           if-no-files-found: warn
 
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 3 — container / supply chain. Only waits on build_test
+  # because it typically needs the app to have built & passed tests
+  # before it's worth containerizing. DOCKERHUB_USERNAME/TOKEN are only
+  # referenced inside the publish step, gated on image_publish — a
+  # client who only wants SBOM+scan (no registry push) never needs
+  # those secrets at all.
+  # ──────────────────────────────────────────────────────────────────
   supply_chain:
-    needs: [bootstrap, build_test, policy_testing]
-
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-
+    needs: [bootstrap, secret_scan, build_test]
+    if: |
+      always() && needs.bootstrap.result == 'success' &&
+      needs.secret_scan.result != 'failure' &&
+      needs.build_test.result != 'failure' &&
+      needs.bootstrap.outputs.container_stage == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
-
       - name: Install container tools
         shell: bash
         run: |
@@ -191,9 +358,8 @@ jobs:
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
-
-      - name: Run Container & Supply-Chain provider
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "cosign trivy syft"
+      - name: Build, scan, SBOM, provenance, sign (no registry credentials needed)
         shell: bash
         run: |
           set -euo pipefail
@@ -202,92 +368,55 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/container/run.sh"
-
-      - name: Upload container reports
-        uses: actions/upload-artifact@v4
+      - name: Publish image (only step that needs registry credentials)
+        if: fromJson(needs.bootstrap.outputs.capabilities).image_publish == true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "image_publish is enabled but DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are missing"
+            exit 2
+          fi
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          bash "${{ github.workspace }}/platform/platform/container/publish.sh"
+      - uses: actions/upload-artifact@v4
         with:
-          name: container-supply-chain-reports
+          name: report-container
           path: .devsecops/reports/container
           if-no-files-found: warn
 
-  scanners:
-    needs: [bootstrap, build_test,policy_testing, supply_chain]
-    runs-on: ubuntu-latest
-
-    env:
-      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
-    strategy:
-      matrix:
-        scanner: [gitleaks, semgrep, snyk, checkov]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
-        with:
-          repository: TasniimCh/Platform-Pipeline
-          ref: risk-advisor
-          path: platform
-
-      - name: Install scanner tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
-
-      - name: Run scanner
-        shell: bash
-        run: |
-          set -euo pipefail
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/scanners/run-scanner.sh" "${{ matrix.scanner }}"
-
-      - name: Upload scanner report
-        uses: actions/upload-artifact@v4
-        with:
-          name: report-${{ matrix.scanner }}
-          path: .devsecops/reports/${{ matrix.scanner }}
-          if-no-files-found: warn
-
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 4 — AI Risk Advisor: aggregates every report that actually
+  # ran (skipped stages simply contribute nothing) and produces the
+  # deterministic decision. Only blocked by an actual secret leak.
+  # ──────────────────────────────────────────────────────────────────
   risk_assessment:
-    needs: [bootstrap, build_test, policy_testing, supply_chain, scanners]
+    needs: [bootstrap, secret_scan, code_scans, build_test, policy_testing, supply_chain]
+    if: |
+      always() && needs.bootstrap.result == 'success' &&
+      needs.secret_scan.result != 'failure'
     runs-on: ubuntu-latest
     outputs:
       decision: ${{ steps.run-risk-advisor.outputs.decision }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
-
-      - name: Download standard report artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: .devsecops/reports
-          pattern: "*-reports"
-          merge-multiple: false
-
-      - name: Download scanner report artifacts
+      - name: Download report artifacts
         uses: actions/download-artifact@v4
         with:
           path: .devsecops/reports
           pattern: "report-*"
           merge-multiple: false
-
       - name: Install required tools
         shell: bash
         run: |
@@ -296,8 +425,9 @@ jobs:
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
-
+          # risk/run.sh reads merged config + report JSON, not any scanner CLI —
+          # empty filter keeps this to the unconditional PyYAML install.
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" ""
       - name: Run AI Risk Advisor provider
         id: run-risk-advisor
         shell: bash
@@ -311,40 +441,43 @@ jobs:
           decision=$(python3 - <<'PY'
           import json
           from pathlib import Path
-          path = Path('.devsecops/reports/risk/assessment.json')
+          path = Path(".devsecops/reports/risk/assessment.json")
           if not path.exists():
-              raise SystemExit('Missing risk assessment report')
-          with path.open('r', encoding='utf-8') as fh:
-              payload = json.load(fh)
-          print(payload.get('decision_reference', {}).get('action', 'manual_approval'))
+              raise SystemExit("Missing risk assessment report")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          print(payload.get("decision_reference", {}).get("action", "manual_approval"))
           PY
           )
           echo "decision=$decision" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Risk Assessment report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: risk-assessment-report
+          name: report-risk
           path: .devsecops/reports/risk
           if-no-files-found: warn
 
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 5 — GitOps update. Gated on BOTH the capability flag and the
+  # decision, so GITOPS_TOKEN is never dereferenced for a client who
+  # never enabled gitops_update — unlike V0, where the job could reach
+  # the "clone GitOps repo" step purely because the decision happened
+  # to be 'promote', regardless of whether the client wanted this stage.
+  # ──────────────────────────────────────────────────────────────────
   gitops:
     needs: [bootstrap, risk_assessment]
-    if: ${{ needs.risk_assessment.outputs.decision == 'promote' || needs.risk_assessment.outputs.decision == 'manual_approval' }}
+    if: |
+      always() && needs.risk_assessment.result == 'success' &&
+      fromJson(needs.bootstrap.outputs.capabilities).gitops_update == true &&
+      (needs.risk_assessment.outputs.decision == 'promote' || needs.risk_assessment.outputs.decision == 'manual_approval')
     runs-on: ubuntu-latest
     env:
       GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
-
       - name: Resolve GitOps repository metadata
         id: gitops-meta
         shell: bash
@@ -356,91 +489,65 @@ jobs:
           import yaml
 
           config_file = Path("${{ needs.bootstrap.outputs.config-file }}")
-          data = yaml.safe_load(config_file.read_text(encoding='utf-8')) or {}
-          gitops = data.get('gitops', {})
-          repository = gitops.get('repository')
-          ref = gitops.get('ref') or 'main'
-          values_file = gitops.get('values_file')
+          data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+          gitops = data.get("gitops", {})
+          repository = gitops.get("repository")
+          ref = gitops.get("ref") or "main"
+          values_file = gitops.get("values_file")
 
           if not repository or not values_file:
-              raise SystemExit("Missing gitops.repository or gitops.values_file in client config")
+              raise SystemExit("gitops_update is enabled but gitops.repository / gitops.values_file are missing from the config")
 
-          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"repository={repository}\n")
               out.write(f"ref={ref}\n")
               out.write(f"values_file={values_file}\n")
           PY
-
       - name: Checkout client GitOps repository
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${GITOPS_TOKEN:-}" ]; then
-            echo "GITOPS_TOKEN is required when gitops_update is enabled"
+            echo "GITOPS_TOKEN is required because gitops_update is enabled"
             exit 2
           fi
-
           repo="${{ steps.gitops-meta.outputs.repository }}"
           ref="${{ steps.gitops-meta.outputs.ref }}"
           git clone --branch "$ref" --depth 1 "https://x-access-token:${GITOPS_TOKEN}@github.com/${repo}.git" "$GITHUB_WORKSPACE/gitops-repo"
-
-      - name: Download container reports
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: container-supply-chain-reports
+          name: report-container
           path: .devsecops/reports/container
-      - name: Resolve runtime image and GitOps values
+      - name: Resolve runtime image
         shell: bash
         run: |
           set -euo pipefail
-
           image_digest="$(python3 - <<'PY'
           import glob, json, os
-          candidates = sorted(glob.glob(os.path.join('.devsecops', 'reports', 'container', '*', 'metadata.json')))
+          candidates = sorted(glob.glob(os.path.join(".devsecops", "reports", "container", "*", "metadata.json")))
           if not candidates:
-              raise SystemExit('No container metadata found for image digest resolution')
-          latest = candidates[-1]
-          with open(latest, 'r', encoding='utf-8') as handle:
+              raise SystemExit("No container metadata found for image digest resolution")
+          with open(candidates[-1], "r", encoding="utf-8") as handle:
               payload = json.load(handle)
-          digest = payload.get('image_digest') or payload.get('image_id') or payload.get('image') or ''
+          digest = payload.get("image_digest") or payload.get("image_id") or payload.get("image") or ""
           if not digest:
-              raise SystemExit('Container metadata is missing image identity')
+              raise SystemExit("Container metadata is missing image identity")
           print(digest)
           PY
           )"
-
           image_repository="$(python3 - <<'PY'
           import glob, json, os
-          candidates = sorted(glob.glob(os.path.join('.devsecops', 'reports', 'container', '*', 'metadata.json')))
-          if not candidates:
-              raise SystemExit('No container metadata found for image repository resolution')
-          latest = candidates[-1]
-          with open(latest, 'r', encoding='utf-8') as handle:
+          candidates = sorted(glob.glob(os.path.join(".devsecops", "reports", "container", "*", "metadata.json")))
+          with open(candidates[-1], "r", encoding="utf-8") as handle:
               payload = json.load(handle)
-          image_ref = payload.get('registry_repository') or payload.get('image') or ''
+          image_ref = payload.get("registry_repository") or payload.get("image") or ""
           if not image_ref:
-              raise SystemExit('Container metadata is missing image reference')
-          print(image_ref.split(':', 1)[0])
+              raise SystemExit("Container metadata is missing image reference")
+          print(image_ref.split(":", 1)[0])
           PY
           )"
-
           echo "IMAGE_DIGEST=${image_digest}" >> "$GITHUB_ENV"
           echo "IMAGE_REPOSITORY=${image_repository}" >> "$GITHUB_ENV"
-          echo "GITOPS_REPO_PATH=${GITHUB_WORKSPACE}/gitops-repo" >> "$GITHUB_ENV"
-          echo "GITOPS_VALUES_FILE=${{ steps.gitops-meta.outputs.values_file }}" >> "$GITHUB_ENV"
-          echo "GITOPS_REF=${{ steps.gitops-meta.outputs.ref }}" >> "$GITHUB_ENV"
-          echo "GITOPS_DECISION=${{ needs.risk_assessment.outputs.decision }}" >> "$GITHUB_ENV"
-
-      - name: Install required tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
-
       - name: Run GitOps update provider
         shell: bash
         run: |
@@ -451,87 +558,79 @@ jobs:
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           export GITOPS_REPO_PATH="$GITHUB_WORKSPACE/gitops-repo"
           export GITOPS_VALUES_FILE="${{ steps.gitops-meta.outputs.values_file }}"
-          export GITOPS_DECISION=promote
+          export GITOPS_REF="${{ steps.gitops-meta.outputs.ref }}"
+          # Pass the ACTUAL decision through — do not hardcode "promote".
+          # The provider script should branch on manual_approval (e.g. open
+          # a PR for human review) vs promote (e.g. commit directly).
+          export GITOPS_DECISION="${{ needs.risk_assessment.outputs.decision }}"
           export IMAGE_REPOSITORY="$IMAGE_REPOSITORY"
           export IMAGE_DIGEST="$IMAGE_DIGEST"
-          export GITOPS_REF="${{ steps.gitops-meta.outputs.ref }}"
           bash "${{ github.workspace }}/platform/platform/gitops/run.sh"
-
-      - name: Upload GitOps update report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: gitops-update-report
+          name: report-gitops
           path: .devsecops/reports/gitops
           if-no-files-found: warn
 
+  # ──────────────────────────────────────────────────────────────────
+  # STAGE 6 — ephemeral-cluster validation. Gated on its own capability
+  # flag, independent of whether gitops_update ran — a client can want
+  # manifest/admission validation on a throwaway kind cluster without
+  # ever pushing to a real GitOps repo.
+  # ──────────────────────────────────────────────────────────────────
   cluster_validation:
     needs: [bootstrap, gitops]
-    if: ${{ always() && needs.gitops.result == 'success' }}
+    if: |
+      always() && fromJson(needs.bootstrap.outputs.capabilities).cluster_validation == true &&
+      needs.gitops.result != 'failure'
     runs-on: ubuntu-latest
-
     env:
       GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout platform repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
-
       - name: Create ephemeral kind cluster
         uses: helm/kind-action@v1
         with:
           cluster_name: pipeline-validation
           wait: 120s
-
       - name: Verify cluster
         shell: bash
         run: |
           set -euo pipefail
-
           kubectl cluster-info
           kubectl get nodes
-
       - name: Install required tools
         shell: bash
         run: |
           set -euo pipefail
-
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
-            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}"
-
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "kyverno"
       - name: Run cluster validation provider
         shell: bash
         run: |
           set -euo pipefail
-
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           export GITOPS_TOKEN="${GITOPS_TOKEN}"
-
           bash "${{ github.workspace }}/platform/platform/cluster-validation/run.sh"
-
-      - name: Upload cluster validation report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: cluster-validation-report
+          name: report-cluster-validation
           path: .devsecops/reports/cluster-validation
           if-no-files-found: warn
 
   pipeline_summary:
-    needs: [risk_assessment, gitops, cluster_validation]
+    needs: [bootstrap, secret_scan, code_scans, build_test, policy_testing, supply_chain, risk_assessment, gitops, cluster_validation]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -539,6 +638,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Risk assessment decision: ${{ needs.risk_assessment.result }}"
-          echo "GitOps job result: ${{ needs.gitops.result || 'skipped' }}"
-          echo "Cluster validation result: ${{ needs.cluster_validation.result || 'skipped' }}"
+          echo "Secret scan:         ${{ needs.secret_scan.result }}"
+          echo "Code/dependency/IaC:  ${{ needs.code_scans.result }}"
+          echo "Build & tests:        ${{ needs.build_test.result }}"
+          echo "Policy testing:       ${{ needs.policy_testing.result }}"
+          echo "Supply chain:         ${{ needs.supply_chain.result }}"
+          echo "Risk assessment:      ${{ needs.risk_assessment.result }} (decision: ${{ needs.risk_assessment.outputs.decision }})"
+          echo "GitOps update:        ${{ needs.gitops.result }}"
+          echo "Cluster validation:   ${{ needs.cluster_validation.result }}"

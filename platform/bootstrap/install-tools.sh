@@ -315,10 +315,29 @@ install_kyverno_cli() {
   log_info "Kyverno CLI version: $(kyverno version)"
   return 0
 }
-
 install_required_tools() {
   local config_path="$1"
   local workspace="${WORKSPACE:-$PWD}"
+
+  # Optional 2nd arg: space-separated allow-list of tool names to install
+  # (e.g. "gitleaks", "semgrep snyk checkov", "cosign trivy syft"). Called
+  # with a single argument (unchanged), every tool for every enabled
+  # capability is still installed — existing callers keep working as-is.
+  local filter_provided=0
+  local tool_filter=""
+  if [ "$#" -ge 2 ]; then
+    filter_provided=1
+    tool_filter="$2"
+  fi
+
+  _tool_wanted() {
+    local tool="$1"
+    [ "$filter_provided" -eq 0 ] && return 0
+    case " $tool_filter " in
+      *" $tool "*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
 
   if [ -z "$config_path" ] || [ ! -f "$config_path" ]; then
     if [ "$config_path" = "$workspace/.devsecops/pipeline.yaml" ] || \
@@ -335,93 +354,65 @@ install_required_tools() {
   local scanners
   scanners=$(enabled_scanner_tools "$workspace" "$config_path")
 
+  if [ "$filter_provided" -eq 1 ]; then
+    local filtered=""
+    for scanner in $scanners; do
+      _tool_wanted "$scanner" && filtered="$filtered $scanner"
+    done
+    scanners="$filtered"
+  fi
+
   if [ -n "$scanners" ]; then
     for scanner in $scanners; do
       case "$scanner" in
-        gitleaks)
-          install_gitleaks
-          ;;
-        semgrep)
-          install_python_package semgrep
-          ;;
-        snyk)
-          install_npm_package snyk
-          ;;
-        checkov)
-          install_python_package checkov
-          ;;
-        cosign)
-          install_cosign
-          ;;
-        kyverno)
-          install_kyverno_cli
-          ;;
-        *)
-          log_warn "No installer implemented for scanner '$scanner'"
-          ;;
+        gitleaks) install_gitleaks ;;
+        semgrep) install_python_package semgrep ;;
+        snyk) install_npm_package snyk ;;
+        checkov) install_python_package checkov ;;
+        cosign) install_cosign ;;
+        kyverno) install_kyverno_cli ;;
+        *) log_warn "No installer implemented for scanner '$scanner'" ;;
       esac
     done
   else
-    log_warn "No enabled scanners determined from capabilities; nothing to install"
+    log_warn "No tools to install for this job (capability disabled, or filtered out)"
   fi
 
-  # Load normalized platform configuration once.
   local merged
   merged=$(load_merged_config_json "$workspace" "$config_path") || {
     log_error "Failed to load merged platform configuration"
     exit "$PLATFORM_EXIT_CONFIG"
   }
 
-  # Install Conftest when policy enforcement is enabled.
-local policy_enabled
-policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
+  local policy_enabled
+  policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
 import json
 import os
-
 config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
-
-enabled = config.get("capabilities", {}).get(
-    "policy_enforcement",
-    False
-)
-
+enabled = config.get("capabilities", {}).get("policy_enforcement", False)
 print("yes" if enabled else "")
 PY
 )
 
-if [ "$policy_enabled" = "yes" ]; then
-  log_info "Policy enforcement enabled; installing conftest"
+  if [ "$policy_enabled" = "yes" ] && _tool_wanted conftest; then
+    log_info "Policy enforcement enabled; installing conftest"
+    install_conftest || {
+      log_error "Conftest installation failed"
+      exit "$PLATFORM_EXIT_FAILURE"
+    }
+  fi
 
-  install_conftest || {
-    log_error "Conftest installation failed"
-    exit "$PLATFORM_EXIT_FAILURE"
-  }
-fi
-
-  # Install container/supply-chain tools if enabled.
   local has_container
   has_container=$(CONFIG_JSON="$merged" python3 -c "
-import os
-import json
-
+import os, json
 cfg = json.loads(os.environ.get('CONFIG_JSON', '{}'))
 caps = cfg.get('capabilities', {})
-
-print(
-    'yes'
-    if (
-        caps.get('container_build')
-        or caps.get('container_scan')
-        or caps.get('sbom')
-        or caps.get('provenance')
-    )
-    else ''
-)
+print('yes' if (caps.get('container_build') or caps.get('container_scan') or caps.get('sbom') or caps.get('provenance')) else '')
 ")
 
   if [ "$has_container" = "yes" ]; then
-    install_trivy || log_warn "trivy install failed"
-    install_syft || log_warn "syft install failed"
+    _tool_wanted trivy && { install_trivy || log_warn "trivy install failed"; }
+    _tool_wanted syft && { install_syft || log_warn "syft install failed"; }
   fi
 }
 
@@ -434,7 +425,7 @@ main() {
     exit $PLATFORM_EXIT_CONFIG
   fi
 
-  install_required_tools "$1"
+  install_required_tools "$@"
 }
 
 main "$@"
