@@ -366,20 +366,43 @@ install_required_tools() {
   fi
 
   if [ -n "$scanners" ]; then
-    for scanner in $scanners; do
-      case "$scanner" in
-        gitleaks) install_gitleaks ;;
-        semgrep) install_python_package semgrep ;;
-        snyk) install_npm_package snyk ;;
-        checkov) install_python_package checkov ;;
-        cosign) install_cosign ;;
-        kyverno) install_kyverno_cli ;;
-        *) log_warn "No installer implemented for scanner '$scanner'" ;;
-      esac
-    done
-  else
-    log_warn "No tools to install for this job (capability disabled, or filtered out)"
-  fi
+  for scanner in $scanners; do
+    case "$scanner" in
+      gitleaks)
+        install_gitleaks
+        ;;
+      semgrep)
+        install_python_package semgrep
+        ;;
+      snyk)
+        install_npm_package snyk
+        ;;
+      checkov)
+        install_python_package checkov
+        ;;
+      cosign)
+        install_cosign
+        ;;
+      kyverno)
+        install_kyverno_cli
+        ;;
+      *)
+        log_warn "No installer implemented for scanner '$scanner'"
+        ;;
+    esac
+  done
+else
+  log_warn "No tools to install for this job (capability disabled, or filtered out)"
+fi
+
+# A filtered installation request only installs the requested tools.
+# Do not evaluate/install unrelated platform capabilities.
+if [ "$filter_provided" -eq 1 ]; then
+  log_info "Filtered tool installation completed: $tool_filter"
+  return 0
+fi
+
+
 
   local merged
 
@@ -392,37 +415,59 @@ install_required_tools() {
 
   log_info "Merged configuration loaded successfully"
 
-  local policy_enabled
-  policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
+  log_info "Checking policy enforcement capability..."
+
+local policy_enabled
+if ! policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
 import json
 import os
+
 config = json.loads(os.environ.get("CONFIG_JSON", "{}"))
 enabled = config.get("capabilities", {}).get("policy_enforcement", False)
 print("yes" if enabled else "")
 PY
-)
+); then
+    log_error "Failed to evaluate policy_enforcement capability"
+    exit "$PLATFORM_EXIT_CONFIG"
+fi
 
-  if [ "$policy_enabled" = "yes" ] && _tool_wanted conftest; then
+log_info "policy_enforcement='$policy_enabled'"
+
+if [ "$policy_enabled" = "yes" ] && _tool_wanted conftest; then
     log_info "Policy enforcement enabled; installing conftest"
     install_conftest || {
-      log_error "Conftest installation failed"
-      exit "$PLATFORM_EXIT_FAILURE"
+        log_error "Conftest installation failed"
+        exit "$PLATFORM_EXIT_FAILURE"
     }
-  fi
+fi
 
-  local has_container
-  has_container=$(CONFIG_JSON="$merged" python3 -c "
-import os, json
-cfg = json.loads(os.environ.get('CONFIG_JSON', '{}'))
-caps = cfg.get('capabilities', {})
-print('yes' if (caps.get('container_build') or caps.get('container_scan') or caps.get('sbom') or caps.get('provenance')) else '')
-")
+log_info "Checking container capabilities..."
 
-  if [ "$has_container" = "yes" ]; then
-    _tool_wanted trivy && { install_trivy || log_warn "trivy install failed"; }
-    _tool_wanted syft && { install_syft || log_warn "syft install failed"; }
-  fi
-}
+local has_container
+if ! has_container=$(CONFIG_JSON="$merged" python3 - <<'PY'
+import os
+import json
+
+cfg = json.loads(os.environ.get("CONFIG_JSON", "{}"))
+caps = cfg.get("capabilities", {})
+
+print(
+    "yes"
+    if (
+        caps.get("container_build")
+        or caps.get("container_scan")
+        or caps.get("sbom")
+        or caps.get("provenance")
+    )
+    else ""
+)
+PY
+); then
+    log_error "Failed to evaluate container capabilities"
+    exit "$PLATFORM_EXIT_CONFIG"
+fi
+
+log_info "has_container='$has_container'"
 
 main() {
   echo "DEFAULT_CONFIG=$DEFAULT_CONFIG"
