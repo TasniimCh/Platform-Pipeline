@@ -352,7 +352,10 @@ install_required_tools() {
   install_python_package pyyaml
 
   local scanners
+
+  log_info "Resolving enabled scanner tools..."
   scanners=$(enabled_scanner_tools "$workspace" "$config_path")
+  log_info "Resolved scanners: '${scanners:-none}'"
 
   if [ "$filter_provided" -eq 1 ]; then
     local filtered=""
@@ -379,10 +382,15 @@ install_required_tools() {
   fi
 
   local merged
-  merged=$(load_merged_config_json "$workspace" "$config_path") || {
-    log_error "Failed to load merged platform configuration"
-    exit "$PLATFORM_EXIT_CONFIG"
-  }
+
+  log_info "Loading merged platform configuration..."
+
+  if ! merged=$(load_merged_config_json "$workspace" "$config_path"); then
+      log_error "Failed to load merged platform configuration"
+      exit "$PLATFORM_EXIT_CONFIG"
+  fi
+
+  log_info "Merged configuration loaded successfully"
 
   local policy_enabled
   policy_enabled=$(CONFIG_JSON="$merged" python3 - <<'PY'
