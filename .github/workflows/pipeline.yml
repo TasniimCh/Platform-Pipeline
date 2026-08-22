@@ -364,6 +364,19 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "cosign trivy syft"
+
+           echo "=== Installed container tools ==="
+          command -v docker
+          docker --version
+
+          command -v trivy
+          trivy --version
+
+          command -v syft
+          syft version
+
+          command -v cosign
+          cosign version
       - name: Build, scan, SBOM, provenance, sign 
         shell: bash
         run: |
