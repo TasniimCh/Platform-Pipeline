@@ -42,11 +42,6 @@ jobs:
       config-file: ${{ steps.set-vars.outputs.config-file }}
       report-directory: ${{ steps.set-vars.outputs.report-directory }}
       log-level: ${{ steps.set-vars.outputs.log-level }}
-      # Single source of truth: the merged (default + client + capabilities-map)
-      # capabilities object, exactly as produced by platform/lib/config.sh's
-      # load_merged_config_json(). Every downstream job reads specific keys
-      # via fromJson(needs.bootstrap.outputs.capabilities).<key> instead of
-      # each job re-parsing/re-merging the YAML itself.
       capabilities: ${{ steps.flags.outputs.capabilities }}
       build_stage: ${{ steps.flags.outputs.build_stage }}
       container_stage: ${{ steps.flags.outputs.container_stage }}
@@ -209,7 +204,6 @@ jobs:
         scanner: ${{ fromJson(needs.bootstrap.outputs.code_scanners) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
@@ -223,6 +217,17 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "${{ matrix.scanner }}"
+
+          echo "WORKSPACE=$WORKSPACE"
+          echo "CONFIG_FILE=$CONFIG_FILE"
+          echo "REPORT_DIR=$REPORT_DIR"
+
+          ls -la "$WORKSPACE/.devsecops" || true
+          test -f "$WORKSPACE/$CONFIG_FILE" && echo "Config exists"
+
+          bash -x "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
+            "$WORKSPACE/$CONFIG_FILE" \
+            "gitleaks"
       - name: Run scanner (must exit 0 on findings — only tool crashes should fail this job)
         shell: bash
         run: |
