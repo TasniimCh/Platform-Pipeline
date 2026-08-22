@@ -116,7 +116,7 @@ jobs:
           build_stage = flag("build") or flag("unit_testing") or flag("integration_testing")
           container_stage = any(
               flag(k) for k in
-              ["container_build", "container_scan", "sbom", "provenance", "image_signing", "image_publish"]
+              ["container_build", "container_scan", "sbom", "provenance", "image_signing"]
           )
 
           # enabled_scanner_tools() returns every enabled capability's mapped tool
@@ -364,7 +364,7 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "cosign trivy syft"
-      - name: Build, scan, SBOM, provenance, sign (no registry credentials needed)
+      - name: Build, scan, SBOM, provenance, sign 
         shell: bash
         run: |
           set -euo pipefail
@@ -373,7 +373,7 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
           bash "${{ github.workspace }}/platform/platform/container/run.sh"
-      - name: Publish image (only step that needs registry credentials)
+      - name: Publish image
         if: fromJson(needs.bootstrap.outputs.capabilities).image_publish == true
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -381,20 +381,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
-            echo "image_publish is enabled but DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are missing"
-            exit 2
-          fi
+
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+
           bash "${{ github.workspace }}/platform/platform/container/publish.sh"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: report-container
-          path: .devsecops/reports/container
-          if-no-files-found: warn
+            - uses: actions/upload-artifact@v4
+              with:
+                name: report-container
+                path: .devsecops/reports/container
+                if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────
   # STAGE 4 — AI Risk Advisor: aggregates every report that actually
