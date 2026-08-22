@@ -351,54 +351,63 @@ install_required_tools() {
 
   install_python_package pyyaml
 
-  local scanners
-
-  log_info "Resolving enabled scanner tools..."
-  scanners=$(enabled_scanner_tools "$workspace" "$config_path")
-  log_info "Resolved scanners: '${scanners:-none}'"
 
   if [ "$filter_provided" -eq 1 ]; then
-    local filtered=""
-    for scanner in $scanners; do
-      _tool_wanted "$scanner" && filtered="$filtered $scanner"
+    log_info "Explicit tool installation requested: '$tool_filter'"
+
+    for tool in $tool_filter; do
+      case "$tool" in
+        gitleaks)
+          install_gitleaks
+          ;;
+
+        semgrep)
+          install_python_package semgrep
+          ;;
+
+        snyk)
+          install_npm_package snyk
+          ;;
+
+        checkov)
+          install_python_package checkov
+          ;;
+
+        conftest)
+          install_conftest
+          ;;
+
+        cosign)
+          install_cosign
+          ;;
+
+        trivy)
+          install_trivy
+          ;;
+
+        syft)
+          install_syft
+          ;;
+
+        kyverno)
+          install_kyverno_cli
+          ;;
+
+        *)
+          log_error "No installer implemented for requested tool: '$tool'"
+          return "$PLATFORM_EXIT_FAILURE"
+          ;;
+      esac
+
+      if ! command -v "$tool" >/dev/null 2>&1; then
+        log_error "Tool '$tool' was requested but is not available in PATH"
+        return "$PLATFORM_EXIT_FAILURE"
+      fi
+
+      log_info "$tool is available: $(command -v "$tool")"
     done
-    scanners="$filtered"
-  fi
 
-  if [ -n "$scanners" ]; then
-  for scanner in $scanners; do
-    case "$scanner" in
-      gitleaks)
-        install_gitleaks
-        ;;
-      semgrep)
-        install_python_package semgrep
-        ;;
-      snyk)
-        install_npm_package snyk
-        ;;
-      checkov)
-        install_python_package checkov
-        ;;
-      cosign)
-        install_cosign
-        ;;
-      kyverno)
-        install_kyverno_cli
-        ;;
-      *)
-        log_warn "No installer implemented for scanner '$scanner'"
-        ;;
-    esac
-  done
-else
-  log_warn "No tools to install for this job (capability disabled, or filtered out)"
-fi
-
-  # A filtered installation request only installs the requested tools.
-  # Do not evaluate/install unrelated platform capabilities.
-  if [ "$filter_provided" -eq 1 ]; then
-    log_info "Filtered tool installation completed: $tool_filter"
+    log_info "Explicit tool installation completed successfully"
     return 0
   fi
 
