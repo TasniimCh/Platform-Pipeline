@@ -170,14 +170,56 @@ if caps.get('sbom'):
 if caps.get('provenance'):
     prov_file = os.path.join(result_dir, 'provenance.json')
     print('Generating provenance metadata (placeholder)...')
-    prov = {
-        'source': os.environ.get('GITHUB_REPOSITORY', ''),
-        'commit': os.environ.get('GITHUB_SHA', ''),
-        'build_time': datetime.utcnow().isoformat() + 'Z',
-        'image': full_tag,
-        'image_id': image_id,
-        'published': False,
-    }
+    source_repository = os.environ.get('GITHUB_REPOSITORY', '')
+source_commit = os.environ.get('GITHUB_SHA', '')
+workflow_ref = os.environ.get('GITHUB_WORKFLOW_REF', '')
+run_id = os.environ.get('GITHUB_RUN_ID', '')
+
+prov = {
+    "builder": {
+        "id": "https://github.com/actions/runner"
+    },
+    "buildType": "https://github.com/Attestations/GitHubActionsWorkflow@v1",
+    "invocation": {
+        "configSource": {
+            "uri": (
+                f"git+https://github.com/{source_repository}"
+                if source_repository
+                else ""
+            ),
+            "digest": {
+                "sha1": source_commit
+            } if source_commit else {},
+            "entryPoint": workflow_ref
+        },
+        "parameters": {},
+        "environment": {
+            "github_run_id": run_id
+        }
+    },
+    "metadata": {
+        "buildInvocationId": run_id,
+        "buildStartedOn": datetime.utcnow().isoformat() + "Z",
+        "completeness": {
+            "parameters": False,
+            "environment": False,
+            "materials": False
+        },
+        "reproducible": False
+    },
+    "materials": [
+        {
+            "uri": (
+                f"git+https://github.com/{source_repository}"
+                if source_repository
+                else ""
+            ),
+            "digest": {
+                "sha1": source_commit
+            } if source_commit else {}
+        }
+    ]
+}
     with open(prov_file, 'w', encoding='utf-8') as f:
         json.dump(prov, f, indent=2)
     metadata['reports']['provenance'] = prov_file
