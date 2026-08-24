@@ -42,14 +42,15 @@ if not caps.get('container_build') and not caps.get('container_scan') and not ca
     sys.exit(0)
 
 container_cfg = config.get('container', {})
-registry_cfg = container_cfg.get('registry', {})
 dockerfile = container_cfg.get('dockerfile', './Dockerfile')
 context = container_cfg.get('context', '.')
 image_name = container_cfg.get('image', {}).get('name', 'application')
 image_tag = container_cfg.get('image', {}).get('tag')
+
 if not image_tag:
-    # use commit-based tag if available via env
     image_tag = os.environ.get('GITHUB_SHA', '')[:7] or str(int(time.time()))
+
+full_tag = f"{image_name}:{image_tag}"
 full_tag = f"{image_name}:{image_tag}"
 registry_repo = (registry_cfg.get('repository') or '').strip()
 if (registry_cfg.get('type') or '').lower() == 'dockerhub' and not registry_repo:
@@ -60,28 +61,63 @@ dockerfile_path = os.path.join(workspace, dockerfile)
 if not os.path.isfile(dockerfile_path):
     print(f'Dockerfile not found: {dockerfile_path}', file=sys.stderr)
     sys.exit(2)
-
 # Build image
+print('Local container image is required by the enabled supply-chain capabilities')
+print(f'Building local image: {full_tag}')
+print(f'Dockerfile: {dockerfile_path}')
+print(f'Build context: {context}')
+
+try:
+    subprocess.run(
+        [
+            'bash',
+            '-lc',
+            f'cd "{workspace}/{context}" && '
+            f'docker build -f "{dockerfile_path}" -t "{full_tag}" .'
+        ],
+        check=True
+    )
+except subprocess.CalledProcessError:
+    print('Image build failed', file=sys.stderr)
+    sys.exit(5)
+
+# Resolve local Docker image identity.
+try:
+    image_id = subprocess.check_output(
+        [
+            'docker',
+            'image',
+            'inspect',
+            '--format',
+            '{{.Id}}',
+            full_tag
+        ],
+        text=True
+    ).strip()
+except subprocess.CalledProcessError:
+    print(
+        f'Failed to inspect locally built image: {full_tag}',
+        file=sys.stderr
+    )
+    sys.exit(5)
+
+if not image_id:
+    print(
+        f'Docker returned an empty image ID for: {full_tag}',
+        file=sys.stderr
+    )
+    sys.exit(5)
+
 print(f'Local image built successfully: {full_tag}')
 print(f'Local Docker image ID: {image_id}')
 print(
     'This image ID is local build evidence only and is not a deployable registry digest'
 )
-try:
-    subprocess.run(['bash','-lc', f'cd "{workspace}/{context}" && docker build -f "{dockerfile_path}" -t "{full_tag}" .'], check=True)
-except subprocess.CalledProcessError as e:
-    print('Image build failed', file=sys.stderr)
-    sys.exit(5)
 
-# Resolve image identity (use image ID)
-try:
-    image_id = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}', full_tag], text=True).strip()
-except Exception:
-    print('Failed to inspect built image', file=sys.stderr)
-    sys.exit(5)
-
-# Prepare result dir per image id (sanitize)
-digest = image_id.replace(':','-')
+# Prepare result directory using the local image ID only as an evidence key.
+result_key = image_id.replace(':', '-')
+result_dir = os.path.join(result_base, result_key)
+os.makedirs(result_dir, exist_ok=True)
 result_dir = os.path.join(result_base, digest)
 os.makedirs(result_dir, exist_ok=True)
 
