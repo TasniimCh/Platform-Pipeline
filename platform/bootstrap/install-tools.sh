@@ -411,9 +411,16 @@ print('yes' if (caps.get('container_build') or caps.get('container_scan') or cap
 ")
 
   if [ "$has_container" = "yes" ]; then
-    _tool_wanted trivy && { install_trivy || log_warn "trivy install failed"; }
-    _tool_wanted syft && { install_syft || log_warn "syft install failed"; }
+  if _tool_wanted trivy; then
+    install_trivy || log_warn "trivy install failed"
   fi
+
+  if _tool_wanted syft; then
+    install_syft || log_warn "syft install failed"
+  fi
+fi
+
+return 0
 }
 
 main() {
