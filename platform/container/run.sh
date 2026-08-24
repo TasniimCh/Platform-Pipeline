@@ -62,7 +62,11 @@ if not os.path.isfile(dockerfile_path):
     sys.exit(2)
 
 # Build image
-print(f'Building image {full_tag} from {dockerfile_path} (context: {context})')
+print(f'Local image built successfully: {full_tag}')
+print(f'Local Docker image ID: {image_id}')
+print(
+    'This image ID is local build evidence only and is not a deployable registry digest'
+)
 try:
     subprocess.run(['bash','-lc', f'cd "{workspace}/{context}" && docker build -f "{dockerfile_path}" -t "{full_tag}" .'], check=True)
 except subprocess.CalledProcessError as e:
@@ -85,79 +89,16 @@ metadata = {
     'capability': 'container_supply_chain',
     'status': 'unknown',
     'image': full_tag,
+    'image_tag': image_tag,
     'image_id': image_id,
+    'published': False,
     'start_time': datetime.utcnow().isoformat() + 'Z',
     'end_time': None,
     'duration_seconds': None,
     'reports': {},
 }
 
-if caps.get('image_publish'):
-    dockerhub_user = (os.environ.get('DOCKERHUB_USERNAME') or '').strip()
-    dockerhub_token = (os.environ.get('DOCKERHUB_TOKEN') or '').strip()
-
-    if not dockerhub_user or not dockerhub_token:
-        print(
-            'DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required when image_publish is true',
-            file=sys.stderr
-        )
-        sys.exit(3)
-
-    remote_ref = f"{registry_repo}:{image_tag}"
-    print(f"Logging into Docker Hub for {registry_repo} and pushing {remote_ref}")
-
-    try:
-        # Login
-        subprocess.run(
-            ['docker', 'login', '-u', dockerhub_user, '--password-stdin'],
-            input=dockerhub_token,
-            text=True,
-            check=True
-        )
-
-        # Tag image for registry
-        subprocess.run(
-            ['docker', 'tag', full_tag, remote_ref],
-            check=True
-        )
-
-        # Push and capture output to resolve the registry digest
-        push_result = subprocess.run(
-            ['docker', 'push', remote_ref],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
-        push_output = push_result.stdout + push_result.stderr
-
-        digest = None
-        for line in push_output.splitlines():
-            if 'digest:' in line:
-                digest = line.split('digest:', 1)[1].strip().split()[0]
-                break
-
-        if not digest or not digest.startswith('sha256:'):
-            raise ValueError(
-                f"Unable to resolve registry digest from docker push output:\n{push_output}"
-            )
-
-        # Store published image identity
-        metadata['image'] = remote_ref
-        metadata['image_tag'] = image_tag
-        metadata['image_digest'] = digest
-        metadata['registry_repository'] = registry_repo
-        metadata['published'] = True
-
-        print(f"Published image: {remote_ref}")
-        print(f"Registry digest: {digest}")
-
-    except Exception as exc:
-        print(f'Image publication failed: {exc}', file=sys.stderr)
-        sys.exit(5)
-
-else:
-    metadata['published'] = False
+metadata['published'] = False
 
 # Run Trivy if enabled
 if caps.get('container_scan'):
@@ -191,6 +132,7 @@ if caps.get('provenance'):
         'build_time': datetime.utcnow().isoformat() + 'Z',
         'image': full_tag,
         'image_id': image_id,
+        'published': False,
     }
     with open(prov_file, 'w', encoding='utf-8') as f:
         json.dump(prov, f, indent=2)

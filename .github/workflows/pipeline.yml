@@ -25,6 +25,18 @@ on:
         required: false
         default: info
 
+      image-repository:
+        description: "Externally published container image repository"
+        required: false
+        type: string
+        default: ""
+
+      image-digest:
+        description: "Externally published container image digest (sha256:...)"
+        required: false
+        type: string
+        default: ""
+
 jobs:
   # ──────────────────────────────────────────────────────────────────
   # STAGE 0 — bootstrap: checkout, minimal env setup, and — crucially —
@@ -109,7 +121,25 @@ jobs:
           import json, os
 
           config = json.loads(os.environ["CONFIG_JSON"])
-          caps = config.get("capabilities", {}) or {}
+          caps = config.get('capabilities', {})
+
+          requires_local_image = any(
+              caps.get(capability, False)
+              for capability in (
+                  'container_build',
+                  'container_scan',
+                  'sbom',
+                  'provenance',
+                  'image_publish',
+                  'image_signing',
+              )
+          )
+
+          if not requires_local_image:
+              print(
+                  'No enabled supply-chain capability requires a local image; skipping container build'
+              )
+              sys.exit(0)
 
           def flag(name):
               return bool(caps.get(name, False))
@@ -332,58 +362,302 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   supply_chain:
     needs: [bootstrap, secret_scan, build_test]
+
     if: |
       always() && needs.bootstrap.result == 'success' &&
       needs.secret_scan.result != 'failure' &&
       needs.build_test.result != 'failure' &&
       needs.bootstrap.outputs.container_stage == 'true'
+
     runs-on: ubuntu-latest
+
     permissions:
       id-token: write
       contents: read
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout platform repository
+        uses: actions/checkout@v4
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
+
       - name: Install container tools
         shell: bash
         run: |
           set -euo pipefail
+
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "cosign trivy syft"
-      - name: Build, scan, SBOM, provenance, sign (no registry credentials needed)
+
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
+            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" \
+            "cosign trivy syft"
+
+      - name: Validate supply-chain capability relationships
         shell: bash
         run: |
           set -euo pipefail
+
+          capabilities='${{ needs.bootstrap.outputs.capabilities }}'
+
+          CAPABILITIES="$capabilities" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          caps = json.loads(os.environ["CAPABILITIES"])
+
+          image_publish = bool(caps.get("image_publish", False))
+          image_signing = bool(caps.get("image_signing", False))
+
+          if image_signing and not image_publish:
+              print(
+                  "[ERROR] image_signing is enabled but image_publish is disabled.",
+                  file=sys.stderr,
+              )
+              print(
+                  "[ERROR] Platform image signing requires a published registry image "
+                  "identified by repository@sha256:digest.",
+                  file=sys.stderr,
+              )
+              print(
+                  "[ERROR] Enable image_publish or disable image_signing.",
+                  file=sys.stderr,
+              )
+              sys.exit(2)
+
+          print("[INFO] Supply-chain capability relationships are valid.")
+          PY
+
+      - name: Build local image and generate supply-chain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+
+          echo "[INFO] Starting local container build and evidence generation"
+          echo "[INFO] Registry credentials are not required for this step"
+
           bash "${{ github.workspace }}/platform/platform/container/run.sh"
-      - name: Publish image (only step that needs registry credentials)
-        if: fromJson(needs.bootstrap.outputs.capabilities).image_publish == true
+
+      - name: Publish image
+        if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
-            echo "image_publish is enabled but DOCKERHUB_USERNAME/DOCKERHUB_TOKEN are missing"
-            exit 2
-          fi
+
           export WORKSPACE="$GITHUB_WORKSPACE"
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+
+          echo "[INFO] image_publish is enabled"
+          echo "[INFO] Publishing the platform-built image and resolving its immutable registry digest"
+
           bash "${{ github.workspace }}/platform/platform/container/publish.sh"
-      - uses: actions/upload-artifact@v4
+
+      - name: Resolve published image identity
+        id: published-image
+        if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+
+          python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import re
+          import sys
+
+          report_dir = os.environ["REPORT_DIR"]
+
+          candidates = sorted(
+              glob.glob(
+                  os.path.join(
+                      report_dir,
+                      "container",
+                      "*",
+                      "metadata.json",
+                  )
+              )
+          )
+
+          if not candidates:
+              print(
+                  "[ERROR] No container metadata found after image publication.",
+                  file=sys.stderr,
+              )
+              sys.exit(5)
+
+          metadata_file = candidates[-1]
+
+          with open(metadata_file, "r", encoding="utf-8") as handle:
+              metadata = json.load(handle)
+
+          if metadata.get("published") is not True:
+              print(
+                  "[ERROR] Container metadata does not confirm successful publication.",
+                  file=sys.stderr,
+              )
+              print(
+                  "[ERROR] Signing and attestation require a published registry image.",
+                  file=sys.stderr,
+              )
+              sys.exit(5)
+
+          repository = str(
+              metadata.get("registry_repository") or ""
+          ).strip()
+
+          digest = str(
+              metadata.get("image_digest") or ""
+          ).strip()
+
+          if not repository:
+              print(
+                  "[ERROR] Published metadata is missing registry_repository.",
+                  file=sys.stderr,
+              )
+              sys.exit(5)
+
+          if not re.fullmatch(r"sha256:[a-fA-F0-9]{64}", digest):
+              print(
+                  "[ERROR] Published metadata does not contain a valid registry digest.",
+                  file=sys.stderr,
+              )
+              sys.exit(5)
+
+          print(
+              f"[INFO] Immutable published image resolved: "
+              f"{repository}@{digest}"
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"repository={repository}\n")
+              out.write(f"digest={digest}\n")
+              out.write(f"metadata-file={metadata_file}\n")
+          PY
+
+      - name: Sign published image
+        if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_signing == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image_repository="${{ steps.published-image.outputs.repository }}"
+          image_digest="${{ steps.published-image.outputs.digest }}"
+
+          if [ -z "$image_repository" ] || [ -z "$image_digest" ]; then
+            echo "[ERROR] Image signing was requested but no published image identity was resolved"
+            exit 5
+          fi
+
+          echo "[INFO] Signing immutable image: ${image_repository}@${image_digest}"
+
+          bash "${{ github.workspace }}/platform/platform/container/sign.sh" \
+            "$image_repository" \
+            "$image_digest"
+
+      - name: Resolve provenance evidence
+        id: provenance
+        if: |
+          ${{ fromJson(needs.bootstrap.outputs.capabilities).provenance == true &&
+              fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          metadata_file="${{ steps.published-image.outputs.metadata-file }}"
+
+          if [ -z "$metadata_file" ] || [ ! -f "$metadata_file" ]; then
+            echo "[ERROR] Published container metadata is unavailable"
+            exit 5
+          fi
+
+          provenance_file="$(python3 - "$metadata_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          metadata_path = Path(sys.argv[1])
+
+          with metadata_path.open("r", encoding="utf-8") as handle:
+              metadata = json.load(handle)
+
+          provenance = (
+              metadata.get("reports", {}).get("provenance") or ""
+          )
+
+          if not provenance:
+              raise SystemExit(
+                  "Container metadata does not reference provenance evidence"
+              )
+
+          path = Path(provenance)
+
+          if not path.is_file():
+              raise SystemExit(
+                  f"Provenance evidence does not exist: {path}"
+              )
+
+          print(path)
+          PY
+          )"
+
+          echo "[INFO] Provenance evidence resolved: $provenance_file"
+          echo "file=$provenance_file" >> "$GITHUB_OUTPUT"
+
+      - name: Attest published image provenance
+        if: |
+          ${{ fromJson(needs.bootstrap.outputs.capabilities).provenance == true &&
+              fromJson(needs.bootstrap.outputs.capabilities).image_signing == true &&
+              fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image_repository="${{ steps.published-image.outputs.repository }}"
+          image_digest="${{ steps.published-image.outputs.digest }}"
+          provenance_file="${{ steps.provenance.outputs.file }}"
+
+          if [ -z "$image_repository" ] || [ -z "$image_digest" ]; then
+            echo "[ERROR] Provenance attestation requires a published image identity"
+            exit 5
+          fi
+
+          if [ -z "$provenance_file" ] || [ ! -f "$provenance_file" ]; then
+            echo "[ERROR] Provenance attestation requires a valid provenance document"
+            exit 5
+          fi
+
+          echo "[INFO] Attesting provenance for immutable image:"
+          echo "[INFO] ${image_repository}@${image_digest}"
+
+          bash "${{ github.workspace }}/platform/platform/container/attest.sh" \
+            "$image_repository" \
+            "$image_digest" \
+            "$provenance_file"
+
+      - name: Upload supply-chain report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
         with:
           name: report-container
           path: .devsecops/reports/container
