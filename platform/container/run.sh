@@ -37,8 +37,23 @@ workspace = sys.argv[2]
 result_base = sys.argv[3]
 
 caps = config.get('capabilities', {})
-if not caps.get('container_build') and not caps.get('container_scan') and not caps.get('sbom') and not caps.get('provenance') and not caps.get('image_publish'):
-    print('Container capabilities disabled; skipping')
+
+requires_local_image = any(
+    caps.get(capability, False)
+    for capability in (
+        'container_build',
+        'container_scan',
+        'sbom',
+        'provenance',
+        'image_publish',
+        'image_signing',
+    )
+)
+
+if not requires_local_image:
+    print(
+        'No enabled supply-chain capability requires a local image; skipping container build'
+    )
     sys.exit(0)
 
 container_cfg = config.get('container', {})
@@ -50,11 +65,8 @@ image_tag = container_cfg.get('image', {}).get('tag')
 if not image_tag:
     image_tag = os.environ.get('GITHUB_SHA', '')[:7] or str(int(time.time()))
 
-full_tag = f"{image_name}:{image_tag}"
-full_tag = f"{image_name}:{image_tag}"
-registry_repo = (registry_cfg.get('repository') or '').strip()
-if (registry_cfg.get('type') or '').lower() == 'dockerhub' and not registry_repo:
-    registry_repo = image_name
+
+full_tag = f'{image_name}:{image_tag}'
 
 # Validate dockerfile exists
 dockerfile_path = os.path.join(workspace, dockerfile)
@@ -118,8 +130,6 @@ print(
 result_key = image_id.replace(':', '-')
 result_dir = os.path.join(result_base, result_key)
 os.makedirs(result_dir, exist_ok=True)
-result_dir = os.path.join(result_base, digest)
-os.makedirs(result_dir, exist_ok=True)
 
 metadata = {
     'capability': 'container_supply_chain',
@@ -133,8 +143,6 @@ metadata = {
     'duration_seconds': None,
     'reports': {},
 }
-
-metadata['published'] = False
 
 # Run Trivy if enabled
 if caps.get('container_scan'):
