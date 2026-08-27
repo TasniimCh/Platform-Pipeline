@@ -573,6 +573,10 @@ jobs:
       - name: Build local image and generate supply-chain evidence
         shell: bash
         env:
+          WORKSPACE: ${{ github.workspace }}
+          CONFIG_FILE: ${{ needs.bootstrap.outputs.config_file }}
+          REPORT_DIR: ${{ needs.bootstrap.outputs.report_directory }}
+          LOG_LEVEL: ${{ needs.bootstrap.outputs.log_level }}
           SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
           SOURCE_COMMIT: ${{ github.sha }}
           CI_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -580,13 +584,7 @@ jobs:
           BUILDER_ID: https://github.com/actions/runner
         run: |
           set -euo pipefail
-
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
-
-          bash "${{ github.workspace }}/platform/platform/container/run.sh"
+          bash "$GITHUB_WORKSPACE/platform/platform/container/run.sh"
       - name: Publish image
         if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
         env:

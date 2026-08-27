@@ -1,34 +1,25 @@
-# Getting Started with the DevSecOps Platform
+# DevSecOps Platform --- Quick Start Guide
 
-This document helps client repositories adopt the reusable DevSecOps Platform pipeline.
+## What is it?
 
-## Prerequisites
+The DevSecOps Platform adds reusable security and delivery controls to
+your repository through one GitHub Actions workflow.
 
-- The client repository uses GitHub Actions.
-- The client repository has a workflow that invokes the platform's reusable workflow.
-- A `.devsecops/pipeline.yaml` file is optional; it is only required for customization.
+It can help you detect security issues early, verify that the
+application builds and tests correctly, protect container artifacts,
+enforce deployment policies, assess deployment risk, and validate a DEV
+deployment.
 
-## Repository Structure
+You only enable the capabilities your project needs.
 
-Client repositories should include:
+## 1. Add the workflow
 
-```
-.github/workflows/
-.devsecops/
-  pipeline.yaml
-src/
-```
+Create:
 
-The platform only requires `.devsecops/pipeline.yaml` in the client repository.
+`.github/workflows/devsecops.yml`
 
-## Add the Platform Workflow
-
-Create a GitHub Actions workflow in the client repository, for example:
-
-`.github/workflows/security-pipeline.yml`
-
-```yaml
-name: DevSecOps Security Pipeline
+``` yaml
+name: DevSecOps Pipeline
 
 on:
   push:
@@ -37,195 +28,203 @@ on:
   pull_request:
 
 jobs:
-  security:
-    uses: TasniimCh/Platform-Pipeline/.github/workflows/pipeline.yml@master
+  devsecops:
+    uses: TasniimCh/Platform-Pipeline/.github/workflows/pipeline.yml@main
     with:
-      workspace: ${{ github.workspace }}
       config-file: .devsecops/pipeline.yaml
       report-directory: .devsecops/reports
       log-level: info
     secrets: inherit
 ```
 
-## Configure the Snyk Token
+> Client repositories should use the platform's `main` branch.
 
-The platform uses Snyk for dependency analysis.
-
-If Snyk is enabled, the client repository must provide a SNYK_TOKEN GitHub Actions secret.
-
-1. Get the Snyk token
-
-Create or retrieve an API token from your Snyk account under:
-
-Account Settings → API Token
-
-If Snyk is already authenticated locally, the token can also be retrieved with:
-
-snyk config get api
-2. Store the token in GitHub
-
-In the client repository:
-
-Settings → Secrets and variables → Actions → New repository secret
+## 2. Add a simple configuration
 
 Create:
 
-Name: SNYK_TOKEN
-Value: <your Snyk API token>
+`.devsecops/pipeline.yaml`
 
-## Optional `.devsecops/pipeline.yaml`
+A good starting configuration is:
 
-The platform can run with defaults and does not require `.devsecops/pipeline.yaml`.
-Use the file only when you want to customize capability selection.
-
-Preferred capability-based configuration:
-
-```yaml
+``` yaml
 capabilities:
   secret_detection: true
   static_analysis: true
   dependency_analysis: true
   infrastructure_analysis: true
-  build: false
-  unit_testing: false
-  integration_testing: false
-  gitops_update: false
-  image_signing: false
-  admission_control: false
-  cluster_validation: false
+
+  build: true
+  unit_testing: true
 
 build:
   working_directory: .
   runtime:
     language: node
     version: "22"
-    package_manager: null
   command: null
 
 testing:
   working_directory: .
   unit:
-    enabled: true
-    command: null
-  integration:
-    enabled: false
     command: null
 ```
 
-Legacy scanner-specific configuration is still supported for compatibility:
+This gives you the core security checks plus build and unit-test
+validation without requiring container publication, GitOps, Kubernetes,
+or deployment configuration.
 
-```yaml
-scanners:
-  gitleaks:
-    enabled: true
-    args: []
-  semgrep:
-    enabled: true
-    args: []
-  snyk:
-    enabled: true
-    args: []
-  checkov:
-    enabled: true
-    args: []
+When a build or test command can be reliably detected from the project,
+`command: null` is sufficient. Otherwise, provide the application's
+command explicitly.
+
+## 3. Add only the secrets you need
+
+Secrets are configured in:
+
+**Repository Settings → Secrets and variables → Actions**
+
+For the configuration above, dependency analysis requires:
+
+``` text
+SNYK_TOKEN
 ```
 
-## Pipeline Capabilities
+Additional credentials are only needed when you later enable features
+that require them, such as image publication or GitOps deployment.
 
-Each capability below can be toggled independently in `.devsecops/pipeline.yaml`.
-Enabling a capability with missing prerequisites causes the corresponding job to fail with a configuration error. The platform never fails silently.
+Never place credentials in `pipeline.yaml`.
 
-| Capability | Default | Prerequisites | What it does |
-|---|---|---|---|
-| `secret_detection` | `true` | None | Runs Gitleaks |
-| `static_analysis` | `true` | None | Runs Semgrep |
-| `dependency_analysis` | `true` | `SNYK_TOKEN` secret | Runs Snyk |
-| `infrastructure_analysis` | `true` | None | Runs Checkov |
-| `build` | `false` | `package.json` with a resolvable build command | Runs the build step |
-| `unit_testing` | `false` | `package.json` with `scripts.test` or an explicit unit-test command | Runs unit tests |
-| `integration_testing` | `false` | `package.json` with `scripts.integration` or an explicit integration-test command | Runs integration tests |
-| `container_build` | `false` | Dockerfile at the configured path | Builds the container image |
-| `container_scan` | `false` | `container_build: true` | Runs Trivy on the built image |
-| `sbom` | `false` | `container_build: true` | Generates a CycloneDX SBOM via Syft |
-| `provenance` | `false` | `container_build: true` | Generates a SLSA provenance predicate |
-| `image_publish` | `false` | `container_build: true`; `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` available in the client repo | Logs into Docker Hub, pushes the commit-tagged image, and resolves the registry digest for downstream supply-chain evidence |
-| `image_signing` | `false` | `container_build: true`; `id-token: write` permission on the calling workflow; registry must support OCI referrers for keyless mode | Signs the image and provenance attestation with Cosign |
-| `policy_enforcement` | `false` | Kubernetes manifests or Helm chart present in the repo | Runs Conftest against the configured policy paths |
-| `gitops_update` | `false` | GitOps repository write access; risk decision must be `promote` | Updates the image digest in the GitOps repository and triggers ArgoCD sync |
-| `admission_control` | `false` | Platform-side: Kyverno installed on the target cluster and ClusterPolicies applied | Enforces cluster admission policies for deployment integrity |
-| `cluster_validation` | `false` | `gitops_update: true`; CI job has cluster access credentials; ArgoCD application exists for the client | Waits for rollout health and runs application-owned smoke tests on the DEV deployment |
-| `risk_assessment` | platform-managed | At least one upstream capability enabled; partial evidence is tolerated | Aggregates evidence into a weighted risk score and a `promote`/`manual_approval`/`block`/`reject` decision |
+## 4. Choose additional capabilities when needed
 
-### Additional secrets required, by capability
+  -----------------------------------------------------------------------
+  Capability                          Benefit
+  ----------------------------------- -----------------------------------
+  `secret_detection`                  Detect accidentally committed
+                                      credentials
 
-| Secret | Required when |
-|---|---|
-| `SNYK_TOKEN` | `dependency_analysis: true` |
-| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | `image_publish: true` or `container_build: true` when the flow includes a registry push |
-| GitOps repo credential (TBD, for example `GITOPS_DEPLOY_TOKEN`) | `gitops_update: true` |
-| Cluster access credential (TBD, for example `CLUSTER_ACCESS_TOKEN` or OIDC role ARN) | `cluster_validation: true` |
+  `static_analysis`                   Detect security weaknesses in
+                                      source code
 
-### One-time platform-side setup
+  `dependency_analysis`               Detect vulnerable dependencies
 
-The following are configured once by the platform team, not by each client repository:
+  `infrastructure_analysis`           Detect insecure infrastructure
+                                      configuration
 
-- Kyverno and ArgoCD installed on the target cluster.
-- An ArgoCD `AppProject` and `Application` registered for the client namespace.
-- Vault paths and Kubernetes auth roles scoped to the client's namespace if secrets are used.
-- CI-to-cluster access configured with least-privilege RBAC; never `cluster-admin`.
+  `build`                             Verify the application builds
+                                      successfully
 
-Contact the platform team before enabling `gitops_update`, `admission_control`, or `cluster_validation`.
+  `unit_testing`                      Catch regressions before delivery
 
-## Understanding pipeline outcomes
+  `integration_testing`               Validate interactions between
+                                      application components
 
-The pipeline can finish without a deployment even when the scanner stage is green. This happens when the Risk Advisor decides to `block`, `reject`, or require `manual_approval`.
+  `container_build`                   Produce the deployable container
+                                      image
 
-That outcome is expected and is not a scan failure. It represents the final deployment gate for the promotion decision, which is why the pipeline can be green from a static-analysis perspective while still refusing deployment for policy or risk reasons.
+  `container_scan`                    Detect vulnerabilities in the final
+                                      image
 
-## Review Generated Reports
+  `sbom`                              Generate an inventory of software
+                                      components
 
-After a workflow run, the platform writes standardized reports into the `.devsecops/reports` tree.
+  `provenance`                        Provide artifact origin and build
+                                      traceability
 
-Risk assessment evidence is written under:
+  `image_publish`                     Publish an immutable deployable
+                                      image
 
-```
-.devsecops/reports/risk/assessment.json
-```
+  `image_signing`                     Add artifact authenticity evidence
 
-GitOps update evidence is written under:
+  `policy_enforcement`                Prevent insecure deployment
+                                      configuration from progressing
 
-```
-.devsecops/reports/gitops/
-```
+  `gitops_update`                     Promote an approved image through
+                                      GitOps
 
-Cluster validation evidence is written under:
+  `cluster_validation`                Verify that the DEV deployment
+                                      becomes healthy
+  -----------------------------------------------------------------------
 
-```
-.devsecops/reports/cluster-validation/
-```
+You do not need to enable everything. Start with the controls relevant
+to your repository and extend the configuration as the application
+delivery requirements grow.
 
-The workflow uploads the relevant artifacts by stage. Scanner outputs remain scoped per tool under:
+## 5. Example: add container security later
 
-```
-.devsecops/reports/<tool>/
-```
+When the project is ready for container delivery, extend the
+configuration:
 
-Container and supply-chain evidence is written under:
+``` yaml
+capabilities:
+  container_build: true
+  container_scan: true
+  sbom: true
+  provenance: true
 
-```
-.devsecops/reports/container/<image-id-or-digest>/
+container:
+  dockerfile: ./Dockerfile
+  context: .
+  image:
+    name: my-app
+    tag: null
 ```
 
-Each image-specific folder contains `report.json` and `metadata.json`, plus tool-native outputs such as Trivy or SBOM files.
+If you also enable `image_publish`, add the registry configuration and
+the required registry credentials.
 
-## Platform Contract
+## 6. Understand the result
 
-The platform contract is documented in `docs/PlatformContract.md`.
-It defines:
+The platform distinguishes between:
 
-- required repository structure
-- supported workflow inputs
-- configuration schema
-- generated report formats
-- compatibility guarantees
-- deprecation and versioning expectations
+-   **Passed** --- the requested validation completed successfully.
+-   **Finding** --- the check ran correctly but discovered a security
+    issue.
+-   **Failed** --- the requested operation could not complete.
+-   **Blocked / rejected** --- security evidence was evaluated and
+    deployment was not authorized.
+-   **Manual approval** --- human authorization is required before
+    promotion.
+
+A successful security check therefore does not automatically mean that
+an application is approved for deployment.
+
+## 7. Reports
+
+Generated evidence is available under:
+
+``` text
+.devsecops/reports/
+```
+
+and through the workflow artifacts produced during the run.
+
+Use these reports when you need to understand a finding, failure, risk
+decision, or deployment result.
+
+## Recommended onboarding path
+
+``` text
+Start
+  │
+  ▼
+Core Security
+  │
+  ├── Secret Detection
+  ├── Static Analysis
+  ├── Dependency Analysis
+  └── Infrastructure Analysis
+  │
+  ▼
+Build + Tests
+  │
+  ▼
+Add Container Security when needed
+  │
+  ▼
+Add Policy / GitOps / DEV Validation when ready
+```
+
+Start small. The platform is capability-based, so the repository
+configuration can grow with the application's delivery and security
+requirements.
