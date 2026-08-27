@@ -587,24 +587,24 @@ jobs:
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           bash "${{ github.workspace }}/platform/platform/container/run.sh"
-            - name: Publish image
-              if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
-              env:
-                DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-                DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-              shell: bash
-              run: |
-                set -euo pipefail
+      - name: Publish image
+        if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-                export WORKSPACE="$GITHUB_WORKSPACE"
-                export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
-                export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
-                export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
+          export WORKSPACE="$GITHUB_WORKSPACE"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
-                echo "[INFO] image_publish is enabled"
-                echo "[INFO] Publishing the platform-built image and resolving its immutable registry digest"
+          echo "[INFO] image_publish is enabled"
+          echo "[INFO] Publishing the platform-built image and resolving its immutable registry digest"
 
-                bash "${{ github.workspace }}/platform/platform/container/publish.sh"
+          bash "${{ github.workspace }}/platform/platform/container/publish.sh"
 
       - name: Resolve published image identity
         id: published-image
