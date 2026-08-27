@@ -43,7 +43,24 @@ IMAGE_REF="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
 PREDICATE_FILE=$(mktemp)
 trap 'rm -f "$PREDICATE_FILE"' EXIT
 
-# Cosign expects only the predicate, not the complete in-toto statement.
+log_info "Inspecting generated provenance structure"
+
+jq '{
+  top_level_keys: keys,
+  predicate_keys: (
+    if (.predicate | type) == "object"
+    then (.predicate | keys)
+    else []
+    end
+  ),
+  builder_candidates: {
+    builder: .builder,
+    predicate_builder: .predicate.builder,
+    run_details_builder: .runDetails.builder,
+    predicate_run_details_builder: .predicate.runDetails.builder
+  }
+}' "$PROVENANCE_FILE"
+
 if jq -e '.predicate | type == "object"' \
   "$PROVENANCE_FILE" >/dev/null 2>&1; then
   jq '.predicate' "$PROVENANCE_FILE" > "$PREDICATE_FILE"
