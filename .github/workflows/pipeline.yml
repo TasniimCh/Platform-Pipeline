@@ -922,7 +922,7 @@ jobs:
           git clone --branch "$ref" --depth 1 "https://x-access-token:${GITOPS_TOKEN}@github.com/${repo}.git" "$GITHUB_WORKSPACE/gitops-repo"
       - uses: actions/download-artifact@v4
         with:
-          name: report-container
+          name: report-supply-chain
           path: .devsecops/reports/container
       - name: Resolve runtime image
         shell: bash
