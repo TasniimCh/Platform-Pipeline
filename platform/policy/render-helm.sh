@@ -27,9 +27,9 @@ validate_helm_chart() {
   fi
 
   if ! command -v helm >/dev/null 2>&1; then
-    log_error "Helm is required for Helm policy testing but is not installed"
-    return "$PLATFORM_EXIT_FAILURE"
-  fi
+  log_error "Helm is required for Helm policy enforcement but is not installed"
+  return "$PLATFORM_EXIT_TOOL_MISSING"
+fi
 }
 
 

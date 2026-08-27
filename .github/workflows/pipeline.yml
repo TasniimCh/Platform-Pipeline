@@ -418,7 +418,7 @@ jobs:
           path: .devsecops/reports/tests
           if-no-files-found: warn
 
-  policy_testing:
+  policy_enforcement:
     needs: [bootstrap, validate_secrets]
     if: |
       always() && needs.bootstrap.result == 'success' &&
@@ -805,7 +805,7 @@ jobs:
   # deterministic decision. Only blocked by an actual secret leak.
   # ──────────────────────────────────────────────────────────────────
   risk_assessment:
-    needs: [bootstrap, validate_secrets, code_scans, build_test, policy_testing, supply_chain]
+    needs: [bootstrap, validate_secrets, code_scans, build_test, policy_enforcement, supply_chain]
     if: |
       always() && needs.bootstrap.result == 'success' &&
       needs.validate_secrets.result != 'failure'
@@ -1038,7 +1038,7 @@ jobs:
           if-no-files-found: warn
 
   pipeline_summary:
-    needs: [bootstrap, validate_secrets, code_scans, build_test, policy_testing, supply_chain, risk_assessment, gitops, cluster_validation]
+    needs: [bootstrap, validate_secrets, code_scans, build_test, policy_enforcement, supply_chain, risk_assessment, gitops, cluster_validation]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1049,7 +1049,7 @@ jobs:
           echo "Secret scan:         ${{ needs.validate_secrets.result }}"
           echo "Code/dependency/IaC:  ${{ needs.code_scans.result }}"
           echo "Build & tests:        ${{ needs.build_test.result }}"
-          echo "Policy testing:       ${{ needs.policy_testing.result }}"
+          echo "Policy enforcement:   ${{ needs.policy_enforcement.result }}"
           echo "Supply chain:         ${{ needs.supply_chain.result }}"
           echo "Risk assessment:      ${{ needs.risk_assessment.result }} (decision: ${{ needs.risk_assessment.outputs.decision }})"
           echo "GitOps update:        ${{ needs.gitops.result }}"

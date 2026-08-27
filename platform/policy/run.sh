@@ -30,7 +30,7 @@ RAW_REPORT="$RESULT_BASE/conftest.json"
 mkdir -p "$RESULT_BASE"
 
 
-log_info "Starting CI Policy Testing provider"
+log_info "Starting CI Policy Enforcement provider"
 log_info "Workspace: $WORKSPACE"
 log_info "Configuration: $WORKSPACE/$CONFIG_FILE"
 log_info "Reports: $RESULT_BASE"
@@ -45,7 +45,7 @@ if ! is_capability_enabled \
     "$WORKSPACE" \
     "$CONFIG_FILE"; then
 
-  log_info "CI Policy Testing capability is disabled; skipping"
+  log_info "CI Policy Enforcement capability is disabled; skipping"
 
   cat > "$REPORT_FILE" <<EOF
 {
@@ -806,7 +806,7 @@ PY
 case "$conftest_status" in
 
   0)
-    log_info "CI Policy Testing completed successfully"
+    log_info "CI Policy Enforcement completed successfully"
     log_info "No policy violations detected"
     exit 0
     ;;
