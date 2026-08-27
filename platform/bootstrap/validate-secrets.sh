@@ -1,86 +1,128 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
-PLATFORM_ROOT=$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+SCRIPT_DIR=$(
+  cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd
+)
+PLATFORM_ROOT=$(
+  cd "$SCRIPT_DIR/.." >/dev/null 2>&1
+  pwd
+)
 
 source "$PLATFORM_ROOT/lib/constants.sh"
 source "$PLATFORM_ROOT/lib/logging.sh"
-source "$PLATFORM_ROOT/config/config.sh"
 
-WORKSPACE="${WORKSPACE:-$PWD}"
-CONFIG_FILE="${CONFIG_FILE:-.devsecops/pipeline.yaml}"
+: "${CAPABILITIES_JSON:=}"
 
-config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE") || {
-    log_error "Failed to load merged platform configuration"
-    exit "$PLATFORM_EXIT_CONFIG"
-}
+if [ -z "$CAPABILITIES_JSON" ]; then
+  log_error "CAPABILITIES_JSON is empty"
+  exit "$PLATFORM_EXIT_CONFIG"
+fi
 
-CONFIG_JSON="$config_json" python3 <<'PY'
+if ! command -v python3 >/dev/null 2>&1; then
+  log_error "Python 3 is required to validate platform credentials"
+  exit "$PLATFORM_EXIT_TOOL_MISSING"
+fi
+
+set +e
+CAPABILITIES_JSON="$CAPABILITIES_JSON" python3 <<'PY'
 import json
 import os
 import sys
 
-config = json.loads(os.environ["CONFIG_JSON"])
-capabilities = config.get("capabilities", {})
+raw_capabilities = os.environ.get("CAPABILITIES_JSON", "")
+
+try:
+    capabilities = json.loads(raw_capabilities)
+except json.JSONDecodeError as exc:
+    print(
+        f"ERROR: CAPABILITIES_JSON is invalid: {exc}",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+if not isinstance(capabilities, dict):
+    print(
+        "ERROR: CAPABILITIES_JSON must contain a JSON object.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 missing = []
 
 
 def require_secret(capability, secret_name):
-    if not capabilities.get(capability, False):
+    if capabilities.get(capability) is not True:
         return
 
-    value = os.environ.get(secret_name, "")
-
-    if not value:
-        missing.append(
-            f"{secret_name} (required by capability '{capability}')"
-        )
+    if not os.environ.get(secret_name, "").strip():
+        missing.append((capability, secret_name))
 
 
-# Dependency/SCA analysis
+# Snyk authentication
 require_secret(
     "dependency_analysis",
     "SNYK_TOKEN",
 )
 
-# GitOps update
+# GitOps repository authentication
 require_secret(
     "gitops_update",
     "GITOPS_TOKEN",
 )
 
-
-# Container registry operations.
-#
-# These should be required only for capabilities that actually
-# authenticate against Docker Hub.
+# Docker Hub authentication is currently required only when publishing.
 require_secret(
     "image_publish",
     "DOCKERHUB_USERNAME",
 )
-
 require_secret(
     "image_publish",
     "DOCKERHUB_TOKEN",
 )
 
-
 if missing:
-    print("ERROR: Required GitHub Actions secrets are missing:", file=sys.stderr)
-
-    for item in missing:
-        print(f"  - {item}", file=sys.stderr)
-
     print(
-        "\nThe pipeline cannot continue because an enabled capability "
-        "requires credentials that were not supplied by the client.",
+        "ERROR: Required GitHub Actions secrets are missing:",
         file=sys.stderr,
     )
 
+    for capability, secret_name in missing:
+        print(
+            f"  - {secret_name} "
+            f"(required by capability '{capability}')",
+            file=sys.stderr,
+        )
+
+    print(
+        "\nAdd the missing secrets to the client repository or "
+        "disable the corresponding capabilities.",
+        file=sys.stderr,
+    )
     sys.exit(2)
 
-
 print("Required GitHub Actions secrets are available.")
+sys.exit(0)
 PY
+VALIDATION_EXIT_CODE=$?
+set -e
+
+case "$VALIDATION_EXIT_CODE" in
+  "$PLATFORM_EXIT_SUCCESS")
+    log_info "Credential preflight validation completed successfully"
+    ;;
+
+  "$PLATFORM_EXIT_CONFIG")
+    log_error "Credential preflight validation failed"
+    ;;
+
+  *)
+    log_error \
+      "Credential validation encountered an execution error: " \
+      "$VALIDATION_EXIT_CODE"
+    VALIDATION_EXIT_CODE="$PLATFORM_EXIT_EXECUTION"
+    ;;
+esac
+
+exit "$VALIDATION_EXIT_CODE"

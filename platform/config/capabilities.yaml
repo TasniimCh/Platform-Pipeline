@@ -1,9 +1,14 @@
 capabilities:
+  # Code-security scanners
   secret_detection: gitleaks
   static_analysis: semgrep
   dependency_analysis: snyk
   infrastructure_analysis: checkov
+
+  # Supply-chain providers
   image_publish: dockerhub
   image_signing: cosign
+
+  # Deployment and policy providers
   admission_control: kyverno
   gitops_update: gitops_update
