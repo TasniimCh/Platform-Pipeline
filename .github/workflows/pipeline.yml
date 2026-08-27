@@ -49,126 +49,207 @@ jobs:
   # the workflow-level gating and by each phase script's own internal checks.
   # ──────────────────────────────────────────────────────────────────
   bootstrap:
+    name: Bootstrap platform
     runs-on: ubuntu-latest
+
     outputs:
       config_file: ${{ steps.set_vars.outputs.config_file }}
       report_directory: ${{ steps.set_vars.outputs.report_directory }}
       log_level: ${{ steps.set_vars.outputs.log_level }}
-
       capabilities: ${{ steps.flags.outputs.capabilities }}
       build_stage: ${{ steps.flags.outputs.build_stage }}
       container_stage: ${{ steps.flags.outputs.container_stage }}
       code_scanners: ${{ steps.flags.outputs.code_scanners }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Set required variables
-        id: set-vars
+    steps:
+      - name: Checkout client repository
+        uses: actions/checkout@v5
+
+      - name: Set workflow variables
+        id: set_vars
+        shell: bash
+        env:
+          INPUT_CONFIG_FILE: ${{ inputs['config-file'] }}
+          INPUT_REPORT_DIRECTORY: ${{ inputs['report-directory'] }}
+          INPUT_LOG_LEVEL: ${{ inputs['log-level'] }}
         run: |
-          echo "config-file=${{ inputs.config-file }}" >> "$GITHUB_OUTPUT"
-          echo "report-directory=${{ inputs.report-directory }}" >> "$GITHUB_OUTPUT"
-          echo "log-level=${{ inputs.log-level }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          config_file="${INPUT_CONFIG_FILE:-.devsecops/pipeline.yaml}"
+          report_directory="${INPUT_REPORT_DIRECTORY:-.devsecops/reports}"
+          log_level="${INPUT_LOG_LEVEL:-info}"
+
+          echo "config_file=$config_file" >> "$GITHUB_OUTPUT"
+          echo "report_directory=$report_directory" >> "$GITHUB_OUTPUT"
+          echo "log_level=$log_level" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved config file: $config_file"
+          echo "Resolved report directory: $report_directory"
+          echo "Resolved log level: $log_level"
 
       - name: Checkout platform repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: TasniimCh/Platform-Pipeline
           ref: risk-advisor
           path: platform
 
+      - name: Install configuration dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "Python 3 is required but unavailable" >&2
+            exit 3
+          fi
+
+          if ! python3 -c "import yaml" >/dev/null 2>&1; then
+            if ! command -v pip3 >/dev/null 2>&1; then
+              echo "pip3 is required to install PyYAML" >&2
+              exit 3
+            fi
+
+            python3 -m pip install --user --quiet pyyaml
+          fi
+
       - name: Bootstrap platform environment
         shell: bash
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          CONFIG_FILE: ${{ steps.set_vars.outputs.config_file }}
+          REPORT_DIR: ${{ steps.set_vars.outputs.report_directory }}
+          LOG_LEVEL: ${{ steps.set_vars.outputs.log_level }}
         run: |
           set -euo pipefail
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ steps.set-vars.outputs.config-file }}"
-          export REPORT_DIR="${{ steps.set-vars.outputs.report-directory }}"
-          export LOG_LEVEL="${{ steps.set-vars.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/bootstrap.sh"
 
-      - name: Resolve capability flags from client config
+          : "${WORKSPACE:?WORKSPACE is empty}"
+          : "${CONFIG_FILE:?CONFIG_FILE is empty}"
+          : "${REPORT_DIR:?REPORT_DIR is empty}"
+
+          bash \
+            "$GITHUB_WORKSPACE/platform/platform/bootstrap/bootstrap.sh"
+
+      - name: Resolve capability flags
         id: flags
         shell: bash
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          CONFIG_FILE: ${{ steps.set_vars.outputs.config_file }}
+          LOG_LEVEL: ${{ steps.set_vars.outputs.log_level }}
         run: |
           set -euo pipefail
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ steps.set-vars.outputs.config-file }}"
 
-          # config.sh lives in config/, next to default.yaml and capabilities.yaml
-          # (PLATFORM_ROOT/config/config.sh — see bootstrap.sh / install-tools.sh,
-          # both of which source it the same way).
-          # Nothing before this point installs PyYAML — bootstrap.sh only validates
-          # and prepares the environment, and install-tools.sh (which does
-          # `install_python_package pyyaml`) hasn't run yet at this stage — so
-          # install it explicitly before sourcing config.sh, which needs `import yaml`.
-          pip3 install --user --quiet pyyaml
+          source \
+            "$GITHUB_WORKSPACE/platform/platform/config/config.sh"
 
-          source "${{ github.workspace }}/platform/platform/config/config.sh"
+          CONFIG_JSON="$(
+            load_merged_config_json "$WORKSPACE" "$CONFIG_FILE"
+          )"
 
-          # Merge default.yaml + client config + capabilities.yaml exactly once —
-          # this is the same merge every phase script already uses internally,
-          # so the workflow-level gating and each script's own internal check
-          # can never disagree.
-          CONFIG_JSON="$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE")"
-          SCANNER_TOOLS="$(enabled_scanner_tools "$WORKSPACE" "$CONFIG_FILE")"
+          SCANNER_TOOLS="$(
+            enabled_scanner_tools "$WORKSPACE" "$CONFIG_FILE"
+          )"
 
-          CONFIG_JSON="$CONFIG_JSON" SCANNER_TOOLS="$SCANNER_TOOLS" python3 - <<'PY'
-          import json, os
+          CONFIG_JSON="$CONFIG_JSON" \
+          SCANNER_TOOLS="$SCANNER_TOOLS" \
+          python3 - <<'PY'
+          import json
+          import os
 
           config = json.loads(os.environ["CONFIG_JSON"])
-          caps = config.get('capabilities', {})
+          capabilities = config.get("capabilities", {})
 
-          requires_local_image = any(
-              caps.get(capability, False)
-              for capability in (
-                  'container_build',
-                  'container_scan',
-                  'sbom',
-                  'provenance',
-                  'image_publish',
-                  'image_signing',
+          if not isinstance(capabilities, dict):
+              raise TypeError("'capabilities' must be a JSON object")
+
+          def enabled(name):
+              return capabilities.get(name) is True
+
+          build_stage = any(
+              enabled(name)
+              for name in (
+                  "build",
+                  "unit_testing",
+                  "integration_testing",
               )
           )
 
-          if not requires_local_image:
-              print(
-                  'No enabled supply-chain capability requires a local image; skipping container build'
-              )
-              sys.exit(0)
-
-          def flag(name):
-              return bool(caps.get(name, False))
-
-          # Derived flags: a job that groups several capabilities (build_test
-          # covers build/unit_testing/integration_testing; supply_chain covers
-          # every container-related capability) needs a single boolean, computed
-            # once here rather than repeated as an OR-chain in every job's `if:`.
-          build_stage = flag("build") or flag("unit_testing") or flag("integration_testing")
           container_stage = any(
-              flag(k) for k in
-              ["container_build", "container_scan", "sbom", "provenance", "image_signing", "image_publish"]
+              enabled(name)
+              for name in (
+                  "container_build",
+                  "container_scan",
+                  "sbom",
+                  "provenance",
+                  "image_publish",
+                  "image_signing",
+              )
           )
 
-          # enabled_scanner_tools() returns every enabled capability's mapped tool
-          # name (from capabilities.yaml), including non-scanner ones like
-          # dockerhub/cosign/kyverno. Keep only the tools the code_scans matrix
-          # actually runs; gitleaks is deliberately excluded — it has its own
-          # dedicated fail-fast job, not a matrix entry.
-          all_tools = os.environ.get("SCANNER_TOOLS", "").split()
-          code_scanners = [t for t in all_tools if t in ("semgrep", "snyk", "checkov")]
-
-          outputs = {
-              "capabilities": json.dumps(caps),
-              "build_stage": str(build_stage).lower(),
-              "container_stage": str(container_stage).lower(),
-              "code_scanners": json.dumps(code_scanners),
+          supported_scanners = {
+              "gitleaks",
+              "semgrep",
+              "snyk",
+              "checkov",
           }
 
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              for k, v in outputs.items():
-                  fh.write(f"{k}={v}\n")
+          code_scanners = []
+
+          for provider in os.environ.get(
+              "SCANNER_TOOLS",
+              "",
+          ).split():
+              if (
+                  provider in supported_scanners
+                  and provider not in code_scanners
+              ):
+                  code_scanners.append(provider)
+
+          outputs = {
+              "capabilities": json.dumps(
+                  capabilities,
+                  separators=(",", ":"),
+              ),
+              "build_stage": str(build_stage).lower(),
+              "container_stage": str(container_stage).lower(),
+              "code_scanners": json.dumps(
+                  code_scanners,
+                  separators=(",", ":"),
+              ),
+          }
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a",
+              encoding="utf-8",
+          ) as output_file:
+              for name, value in outputs.items():
+                  output_file.write(f"{name}={value}\n")
           PY
+
+      - name: Verify bootstrap outputs
+        shell: bash
+        env:
+          CONFIG_FILE: ${{ steps.set_vars.outputs.config_file }}
+          REPORT_DIR: ${{ steps.set_vars.outputs.report_directory }}
+          BUILD_STAGE: ${{ steps.flags.outputs.build_stage }}
+          CONTAINER_STAGE: ${{ steps.flags.outputs.container_stage }}
+          CODE_SCANNERS: ${{ steps.flags.outputs.code_scanners }}
+        run: |
+          set -euo pipefail
+
+          : "${CONFIG_FILE:?config_file output is empty}"
+          : "${REPORT_DIR:?report_directory output is empty}"
+          : "${BUILD_STAGE:?build_stage output is empty}"
+          : "${CONTAINER_STAGE:?container_stage output is empty}"
+          : "${CODE_SCANNERS:?code_scanners output is empty}"
+
+          echo "CONFIG_FILE=$CONFIG_FILE"
+          echo "REPORT_DIR=$REPORT_DIR"
+          echo "BUILD_STAGE=$BUILD_STAGE"
+          echo "CONTAINER_STAGE=$CONTAINER_STAGE"
+          echo "CODE_SCANNERS=$CODE_SCANNERS"
 
 
     # ──────────────────────────────────────────────────────────────────
@@ -204,7 +285,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           bash \
             "$GITHUB_WORKSPACE/platform/platform/bootstrap/validate-secrets.sh"
@@ -224,14 +305,14 @@ jobs:
     if: >-
       ${{ needs.bootstrap.result == 'success' &&
           needs.validate_secrets.result == 'success' &&
-          needs.bootstrap.outputs.code-scanners != '[]' }}
+          needs.bootstrap.outputs.code_scanners != '[]' }}
 
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        scanner: ${{ fromJSON(needs.bootstrap.outputs.code-scanners) }}
+        scanner: ${{ fromJSON(needs.bootstrap.outputs.code_scanners) }}
 
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -253,26 +334,26 @@ jobs:
           set -euo pipefail
 
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           bash \
             "$GITHUB_WORKSPACE/platform/platform/bootstrap/install-tools.sh" \
-            "$GITHUB_WORKSPACE/${{ needs.bootstrap.outputs.config-file }}" \
+            "$GITHUB_WORKSPACE/${{ needs.bootstrap.outputs.config_file }}" \
             "${{ matrix.scanner }}"
 
       - name: Run scanner
         shell: bash
         env:
-          ENABLED_CODE_SCANNERS: ${{ needs.bootstrap.outputs.code-scanners }}
+          ENABLED_CODE_SCANNERS: ${{ needs.bootstrap.outputs.code_scanners }}
         run: |
           set -euo pipefail
 
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           bash \
             "$GITHUB_WORKSPACE/platform/platform/scanners/run-scanner.sh" \
@@ -285,7 +366,7 @@ jobs:
           name: report-code-scan-${{ matrix.scanner }}
           path: >-
             ${{ github.workspace }}/${{
-              needs.bootstrap.outputs.report-directory
+              needs.bootstrap.outputs.report_directory
             }}/${{ matrix.scanner }}
           if-no-files-found: warn
 
@@ -308,23 +389,23 @@ jobs:
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           # No scanner/policy/container tool applies to build & test — pass an
           # explicit empty filter so only the unconditional PyYAML install runs.
           # If build-test/run.sh handles its own runtime/package-manager setup
           # (node version, etc.), this step can likely be dropped entirely —
           # confirm against that script's actual requirements.
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" ""
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" ""
       - name: Run Build & Test provider
         shell: bash
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           bash "${{ github.workspace }}/platform/platform/build-test/run.sh"
       - uses: actions/upload-artifact@v4
         with:
@@ -356,18 +437,18 @@ jobs:
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "conftest"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" "conftest"
       - name: Run CI Policy Testing provider
         shell: bash
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           bash "${{ github.workspace }}/platform/platform/policy/run.sh"
       - uses: actions/upload-artifact@v4
         with:
@@ -415,12 +496,12 @@ jobs:
           set -euo pipefail
 
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
-            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" \
+            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" \
             "cosign trivy syft"
 
       - name: Validate supply-chain capability relationships
@@ -465,9 +546,9 @@ jobs:
           set -euo pipefail
 
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           echo "[INFO] Starting local container build and evidence generation"
           echo "[INFO] Registry credentials are not required for this step"
@@ -484,9 +565,9 @@ jobs:
           set -euo pipefail
 
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
           echo "[INFO] image_publish is enabled"
           echo "[INFO] Publishing the platform-built image and resolving its immutable registry digest"
@@ -500,7 +581,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
 
           python3 - <<'PY'
           import glob
@@ -717,21 +798,21 @@ jobs:
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           # risk/run.sh reads merged config + report JSON, not any scanner CLI —
           # empty filter keeps this to the unconditional PyYAML install.
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" ""
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" ""
       - name: Run AI Risk Advisor provider
         id: run-risk-advisor
         shell: bash
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           bash "${{ github.workspace }}/platform/platform/risk/run.sh"
           decision=$(python3 - <<'PY'
           import json
@@ -783,7 +864,7 @@ jobs:
           from pathlib import Path
           import yaml
 
-          config_file = Path("${{ needs.bootstrap.outputs.config-file }}")
+          config_file = Path("${{ needs.bootstrap.outputs.config_file }}")
           data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
           gitops = data.get("gitops", {})
           repository = gitops.get("repository")
@@ -848,9 +929,9 @@ jobs:
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           export GITOPS_REPO_PATH="$GITHUB_WORKSPACE/gitops-repo"
           export GITOPS_VALUES_FILE="${{ steps.gitops-meta.outputs.values_file }}"
           export GITOPS_REF="${{ steps.gitops-meta.outputs.ref }}"
@@ -904,18 +985,18 @@ jobs:
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config-file }}" "kyverno"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
+          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" "kyverno"
       - name: Run cluster validation provider
         shell: bash
         run: |
           set -euo pipefail
           export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config-file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report-directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log-level }}"
+          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
           export GITOPS_TOKEN="${GITOPS_TOKEN}"
           bash "${{ github.workspace }}/platform/platform/cluster-validation/run.sh"
       - uses: actions/upload-artifact@v4
