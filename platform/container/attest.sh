@@ -11,24 +11,62 @@ IMAGE_REPOSITORY="${1:-}"
 IMAGE_DIGEST="${2:-}"
 PROVENANCE_FILE="${3:-}"
 
-if [ -z "$IMAGE_REPOSITORY" ] || [ -z "$IMAGE_DIGEST" ] || [ -z "$PROVENANCE_FILE" ]; then
-  log_error "Usage: attest.sh <image_repository> <image_digest> <provenance_json_path>"
+if [ -z "$IMAGE_REPOSITORY" ] \
+  || [ -z "$IMAGE_DIGEST" ] \
+  || [ -z "$PROVENANCE_FILE" ]
+then
+
+  log_error \
+    "Usage: attest.sh <image_repository> <image_digest> <provenance_json_path>"
+
   exit "$PLATFORM_EXIT_CONFIG"
 fi
+
+
+if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]]; then
+  log_error \
+    "Invalid image digest: $IMAGE_DIGEST"
+
+  exit "$PLATFORM_EXIT_CONFIG"
+fi
+
 
 if [ ! -f "$PROVENANCE_FILE" ]; then
-  log_error "Provenance file not found: $PROVENANCE_FILE"
+  log_error \
+    "Provenance file not found: $PROVENANCE_FILE"
+
   exit "$PLATFORM_EXIT_CONFIG"
 fi
 
+
 if ! command -v cosign >/dev/null 2>&1; then
-  log_error "cosign is required for provenance attestation"
+  log_error \
+    "cosign is required for provenance attestation"
+
   exit "$PLATFORM_EXIT_TOOL_MISSING"
 fi
 
-if ! cosign attest --yes --predicate "$PROVENANCE_FILE" --type slsaprovenance "${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"; then
-  log_error "Attestation signing failed for ${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
-  exit "$PLATFORM_EXIT_FAILURE"
+
+IMAGE_REF="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+
+log_info \
+  "Attesting provenance for immutable image: $IMAGE_REF"
+
+
+if ! cosign attest \
+    --yes \
+    --predicate "$PROVENANCE_FILE" \
+    --type slsaprovenance \
+    "$IMAGE_REF"
+then
+  log_error \
+    "Provenance attestation failed for $IMAGE_REF"
+
+  exit "$PLATFORM_EXIT_EXECUTION"
 fi
 
-log_info "Attestation signed: ${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+
+log_info \
+  "Provenance attestation completed successfully: $IMAGE_REF"
+
+exit "$PLATFORM_EXIT_SUCCESS"

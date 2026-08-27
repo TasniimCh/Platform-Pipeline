@@ -490,8 +490,10 @@ jobs:
           ref: risk-advisor
           path: platform
 
-      - name: Install container tools
+      - name: Install required container tools
         shell: bash
+        env:
+          CAPABILITIES_JSON: ${{ needs.bootstrap.outputs.capabilities }}
         run: |
           set -euo pipefail
 
@@ -500,9 +502,37 @@ jobs:
           export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
-          bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
-            "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" \
-            "cosign trivy syft"
+          tools="$(
+            python3 - <<'PY'
+          import json
+          import os
+
+          caps = json.loads(os.environ["CAPABILITIES_JSON"])
+
+          tools = []
+
+          if caps.get("container_scan", False):
+              tools.append("trivy")
+
+          if caps.get("sbom", False):
+              tools.append("syft")
+
+          if caps.get("image_signing", False):
+              tools.append("cosign")
+
+          print(" ".join(tools))
+          PY
+          )"
+
+          if [ -n "$tools" ]; then
+            echo "[INFO] Installing required supply-chain tools: $tools"
+
+            bash "${{ github.workspace }}/platform/platform/bootstrap/install-tools.sh" \
+              "${{ github.workspace }}/${{ needs.bootstrap.outputs.config_file }}" \
+              "$tools"
+          else
+            echo "[INFO] No additional supply-chain tools are required"
+          fi
 
       - name: Validate supply-chain capability relationships
         shell: bash
@@ -542,6 +572,12 @@ jobs:
 
       - name: Build local image and generate supply-chain evidence
         shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CI_RUN_ID: ${{ github.run_id }}
+          BUILDER_ID: https://github.com/actions/runner
         run: |
           set -euo pipefail
 
@@ -549,30 +585,26 @@ jobs:
           export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
           export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
           export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
-
-          echo "[INFO] Starting local container build and evidence generation"
-          echo "[INFO] Registry credentials are not required for this step"
 
           bash "${{ github.workspace }}/platform/platform/container/run.sh"
+            - name: Publish image
+              if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
+              env:
+                DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+                DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+              shell: bash
+              run: |
+                set -euo pipefail
 
-      - name: Publish image
-        if: ${{ fromJson(needs.bootstrap.outputs.capabilities).image_publish == true }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
+                export WORKSPACE="$GITHUB_WORKSPACE"
+                export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
+                export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
+                export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
 
-          export WORKSPACE="$GITHUB_WORKSPACE"
-          export CONFIG_FILE="${{ needs.bootstrap.outputs.config_file }}"
-          export REPORT_DIR="${{ needs.bootstrap.outputs.report_directory }}"
-          export LOG_LEVEL="${{ needs.bootstrap.outputs.log_level }}"
+                echo "[INFO] image_publish is enabled"
+                echo "[INFO] Publishing the platform-built image and resolving its immutable registry digest"
 
-          echo "[INFO] image_publish is enabled"
-          echo "[INFO] Publishing the platform-built image and resolving its immutable registry digest"
-
-          bash "${{ github.workspace }}/platform/platform/container/publish.sh"
+                bash "${{ github.workspace }}/platform/platform/container/publish.sh"
 
       - name: Resolve published image identity
         id: published-image
@@ -763,7 +795,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: report-container
+          name: report-supply-chain
           path: .devsecops/reports/container
           if-no-files-found: warn
 
