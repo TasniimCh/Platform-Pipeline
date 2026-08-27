@@ -40,40 +40,33 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 IMAGE_REF="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+
 PREDICATE_FILE=$(mktemp)
 trap 'rm -f "$PREDICATE_FILE"' EXIT
 
-log_info "Inspecting generated provenance structure"
-
-jq '{
-  top_level_keys: keys,
-  predicate_keys: (
-    if (.predicate | type) == "object"
-    then (.predicate | keys)
-    else []
-    end
-  ),
-  builder_candidates: {
-    builder: .builder,
-    predicate_builder: .predicate.builder,
-    run_details_builder: .runDetails.builder,
-    predicate_run_details_builder: .predicate.runDetails.builder
-  }
-}' "$PROVENANCE_FILE"
-
-if jq -e '.predicate | type == "object"' \
-  "$PROVENANCE_FILE" >/dev/null 2>&1; then
-  jq '.predicate' "$PROVENANCE_FILE" > "$PREDICATE_FILE"
-else
-  cp "$PROVENANCE_FILE" "$PREDICATE_FILE"
+# The stored evidence is a complete in-toto statement.
+# Cosign expects only its SLSA predicate body.
+if ! jq -e '
+  ._type
+  and .predicateType
+  and (.predicate | type) == "object"
+' "$PROVENANCE_FILE" >/dev/null; then
+  log_error \
+    "Invalid provenance document: expected a complete in-toto statement"
+  exit "$PLATFORM_EXIT_CONFIG"
 fi
 
+jq '.predicate' "$PROVENANCE_FILE" > "$PREDICATE_FILE"
+
+# Validate the generated SLSA v1 predicate.
 if ! jq -e '
-  .builder.id
-  | type == "string" and length > 0
+  (.buildDefinition | type) == "object"
+  and (.runDetails | type) == "object"
+  and (.runDetails.builder.id | type) == "string"
+  and (.runDetails.builder.id | length) > 0
 ' "$PREDICATE_FILE" >/dev/null; then
   log_error \
-    "Invalid SLSA provenance predicate: required field builder.id is missing"
+    "Invalid SLSA v1 predicate: buildDefinition or runDetails.builder.id is missing"
   exit "$PLATFORM_EXIT_CONFIG"
 fi
 
@@ -82,11 +75,10 @@ log_info "Attesting provenance for immutable image: $IMAGE_REF"
 if ! cosign attest \
   --yes \
   --predicate "$PREDICATE_FILE" \
-  --type slsaprovenance \
+  --type slsaprovenance1 \
   "$IMAGE_REF"; then
   log_error "Provenance attestation failed for $IMAGE_REF"
   exit "$PLATFORM_EXIT_EXECUTION"
 fi
 
 log_info "Provenance attestation completed successfully: $IMAGE_REF"
-exit "$PLATFORM_EXIT_SUCCESS"
