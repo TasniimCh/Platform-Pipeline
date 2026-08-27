@@ -75,7 +75,7 @@ log_info "Attesting provenance for immutable image: $IMAGE_REF"
 if ! cosign attest \
   --yes \
   --predicate "$PREDICATE_FILE" \
-  --type slsaprovenance1 \
+  --type "https://slsa.dev/provenance/v1" \
   "$IMAGE_REF"; then
   log_error "Provenance attestation failed for $IMAGE_REF"
   exit "$PLATFORM_EXIT_EXECUTION"
