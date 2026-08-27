@@ -14,6 +14,9 @@ set -euo pipefail
 #   7. Run Integration Tests after Build + Unit Tests complete successfully.
 #   8. Generate machine-readable reports and metadata.
 #
+# Capability flags control WHETHER a phase runs.
+# Build/testing configuration controls HOW the enabled phase runs.
+#
 # The provider is intentionally independent from GitHub Actions.
 # ---------------------------------------------------------------------------
 
@@ -38,6 +41,18 @@ export CONFIG_FILE
 export REPORT_DIR
 export LOG_LEVEL
 
+# Optional generic CI/source context.
+#
+# These variables intentionally do not use GitHub-specific names.
+# The workflow adapter may populate them when available.
+: "${SOURCE_COMMIT:=}"
+: "${CI_RUN_ID:=}"
+: "${CI_RUN_URL:=}"
+
+export SOURCE_COMMIT
+export CI_RUN_ID
+export CI_RUN_URL
+
 # ---------------------------------------------------------------------------
 # Report directories
 # ---------------------------------------------------------------------------
@@ -61,21 +76,34 @@ config_json=$(load_merged_config_json "$WORKSPACE" "$CONFIG_FILE")
 
 # ---------------------------------------------------------------------------
 # Provider implementation
+#
+# IMPORTANT:
+# Run inside an `if` statement so `set -e` does not terminate the shell before
+# we capture and classify the provider exit status.
 # ---------------------------------------------------------------------------
 
-python3 \
+if python3 \
     - "$config_json" \
     "$WORKSPACE" \
     "$BUILD_DIR" \
     "$UNIT_DIR" \
     "$INTEGRATION_DIR" \
 <<'PY'
-
 import json
 import os
 import subprocess
 import sys
 from datetime import datetime, timezone
+
+
+# ===========================================================================
+# Platform exit codes
+# ===========================================================================
+
+EXIT_SUCCESS = 0
+EXIT_CONFIG = 2
+EXIT_TOOL_MISSING = 3
+EXIT_EXECUTION = 5
 
 
 # ===========================================================================
@@ -104,20 +132,54 @@ def fail(message, exit_code):
     sys.exit(exit_code)
 
 
+def normalize_path(workspace, configured_path):
+    """Resolve a configured working directory under the workspace."""
+    return os.path.abspath(
+        os.path.join(workspace, configured_path or ".")
+    )
+
+
+def command_exists(command):
+    """Check whether an executable is available in PATH."""
+    return subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f"command -v {command}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    ).returncode == 0
+
+
 # ===========================================================================
 # Arguments
 # ===========================================================================
 
 config = json.loads(sys.argv[1])
 
-workspace = sys.argv[2]
+workspace = os.path.abspath(sys.argv[2])
 build_dir = sys.argv[3]
 unit_dir = sys.argv[4]
 integration_dir = sys.argv[5]
 
 
 # ===========================================================================
+# Generic source / CI execution context
+# ===========================================================================
+
+source_commit = os.environ.get("SOURCE_COMMIT") or None
+ci_run_id = os.environ.get("CI_RUN_ID") or None
+ci_run_url = os.environ.get("CI_RUN_URL") or None
+
+
+# ===========================================================================
 # Capability resolution
+#
+# Capabilities are the authoritative enablement mechanism.
+#
+# Configuration sections describe HOW enabled capabilities execute.
 # ===========================================================================
 
 caps = config.get("capabilities", {})
@@ -126,14 +188,13 @@ build_enabled = bool(caps.get("build", False))
 unit_enabled = bool(caps.get("unit_testing", False))
 integration_enabled = bool(caps.get("integration_testing", False))
 
-# If the entire feature is disabled, nothing needs to be executed.
 if not any([
     build_enabled,
     unit_enabled,
     integration_enabled,
 ]):
     print("Build & Test capabilities disabled; skipping")
-    sys.exit(0)
+    sys.exit(EXIT_SUCCESS)
 
 
 # ===========================================================================
@@ -147,63 +208,89 @@ unit_cfg = testing_cfg.get("unit", {})
 integration_cfg = testing_cfg.get("integration", {})
 
 
-# ---------------------------------------------------------------------------
-# Working directories
-#
-# Build has its own working directory.
-# Tests may explicitly override it through testing.working_directory.
-#
-# If no test working directory is specified, the build working directory
-# is used. This keeps the default behavior simple for a single Node project.
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Working-directory resolution
+# ===========================================================================
 
-build_working_directory = os.path.join(
+build_working_directory = normalize_path(
     workspace,
-    build_cfg.get("working_directory", ".")
+    build_cfg.get("working_directory", "."),
 )
 
-test_working_directory = os.path.join(
+test_working_directory = normalize_path(
     workspace,
     testing_cfg.get(
         "working_directory",
-        build_cfg.get("working_directory", ".")
-    )
+        build_cfg.get("working_directory", "."),
+    ),
 )
 
 
-if not os.path.isdir(build_working_directory):
+# Only validate directories used by enabled capabilities.
+
+if build_enabled and not os.path.isdir(build_working_directory):
     fail(
         f"Build working directory not found: "
         f"{build_working_directory}",
-        2,
+        EXIT_CONFIG,
     )
 
 
-if not os.path.isdir(test_working_directory):
+if (
+    (unit_enabled or integration_enabled)
+    and not os.path.isdir(test_working_directory)
+):
     fail(
         f"Test working directory not found: "
         f"{test_working_directory}",
-        2,
+        EXIT_CONFIG,
     )
+
+
+# ---------------------------------------------------------------------------
+# Current Node provider supports one dependency installation for one Node
+# project. Therefore, when Build and Tests are enabled together they must
+# operate on the same project directory.
+#
+# Multi-project dependency preparation belongs to a future provider extension.
+# ---------------------------------------------------------------------------
+
+if (
+    build_enabled
+    and (unit_enabled or integration_enabled)
+    and build_working_directory != test_working_directory
+):
+    fail(
+        "Build and test working directories differ. "
+        "The current Node provider requires enabled Build/Test capabilities "
+        "to operate on the same Node project so dependencies can be installed "
+        "exactly once.",
+        EXIT_CONFIG,
+    )
+
+
+# Select the Node project directory according to enabled capabilities.
+
+if build_enabled:
+    project_working_directory = build_working_directory
+else:
+    project_working_directory = test_working_directory
 
 
 # ===========================================================================
 # Node.js project detection
 # ===========================================================================
 
-# MEAN/Node.js is the initial supported provider.
-#
-# package.json is therefore the primary project marker.
 package_json_path = os.path.join(
-    build_working_directory,
+    project_working_directory,
     "package.json",
 )
 
 if not os.path.isfile(package_json_path):
     fail(
-        "Missing package.json in the build working directory; "
-        "cannot resolve the Node.js project.",
-        2,
+        "Missing package.json in the resolved project working directory; "
+        "cannot resolve the Node.js provider.",
+        EXIT_CONFIG,
     )
 
 
@@ -213,7 +300,7 @@ try:
 except (json.JSONDecodeError, OSError) as exc:
     fail(
         f"Unable to read package.json: {exc}",
-        2,
+        EXIT_CONFIG,
     )
 
 
@@ -222,7 +309,7 @@ scripts = package_data.get("scripts", {})
 if not isinstance(scripts, dict):
     fail(
         "package.json contains an invalid 'scripts' section.",
-        2,
+        EXIT_CONFIG,
     )
 
 
@@ -232,14 +319,14 @@ if not isinstance(scripts, dict):
 
 runtime = build_cfg.get("runtime", {})
 
-language = runtime.get("language", "node")
+language = str(runtime.get("language", "node")).strip().lower()
 required_version = str(runtime.get("version", "")).strip()
 
 if language != "node":
     fail(
         f"Unsupported runtime language: {language}. "
         "The current provider supports Node.js.",
-        2,
+        EXIT_CONFIG,
     )
 
 
@@ -252,19 +339,24 @@ try:
 except FileNotFoundError:
     fail(
         "Node.js is not available in the execution environment.",
-        3,
+        EXIT_TOOL_MISSING,
+    )
+except subprocess.CalledProcessError as exc:
+    fail(
+        f"Unable to determine Node.js version: {exc}",
+        EXIT_TOOL_MISSING,
     )
 
 
 # ---------------------------------------------------------------------------
-# Current MVP version policy:
+# MVP runtime-version policy:
 #
-#   version: "22"
+# version: "22"
 #
 # means Node.js major version 22.
 #
-# The provider intentionally does not implement a full semver constraint
-# engine yet.
+# Full semantic-version constraints are intentionally outside the current
+# provider scope.
 # ---------------------------------------------------------------------------
 
 if required_version:
@@ -275,12 +367,12 @@ if required_version:
         fail(
             f"Required Node.js major version {required_version} is "
             f"unavailable; found {node_version}.",
-            2,
+            EXIT_CONFIG,
         )
 
 
 # ===========================================================================
-# Package manager resolution
+# Package-manager resolution
 # ===========================================================================
 
 lockfiles = {
@@ -291,28 +383,27 @@ lockfiles = {
 
 package_manager = runtime.get("package_manager")
 
-# Detect supported lockfiles.
+if package_manager is not None:
+    package_manager = str(package_manager).strip().lower()
+
+
 lockfile_matches = []
 
 for manager, filename in lockfiles.items():
     if os.path.isfile(
-        os.path.join(build_working_directory, filename)
+        os.path.join(project_working_directory, filename)
     ):
         lockfile_matches.append(manager)
 
 
 # ---------------------------------------------------------------------------
-# Resolution rule:
+# Resolution:
 #
 # Explicit configuration
 #        >
 # Reliable lockfile detection
-#        >
-# Platform default
 #
-# There is intentionally no generic fallback when no lockfile exists.
-# Reproducible dependency installation requires an explicit package manager
-# or a supported lockfile.
+# No package-manager default is assumed when detection is ambiguous or absent.
 # ---------------------------------------------------------------------------
 
 if not package_manager:
@@ -325,42 +416,27 @@ if not package_manager:
             "Multiple supported package-manager lockfiles detected: "
             f"{', '.join(lockfile_matches)}. "
             "Specify build.runtime.package_manager explicitly.",
-            2,
+            EXIT_CONFIG,
         )
 
     else:
         fail(
             "No supported package-manager lockfile found. "
             "Specify build.runtime.package_manager explicitly.",
-            2,
+            EXIT_CONFIG,
         )
 
 
 if package_manager not in lockfiles:
     fail(
         f"Unsupported package manager: {package_manager}",
-        2,
+        EXIT_CONFIG,
     )
 
 
 # ===========================================================================
 # Dependency installation strategy
 # ===========================================================================
-
-# Reproducible installation commands.
-#
-# npm:
-#   package-lock.json -> npm ci
-#
-# yarn:
-#   yarn.lock -> yarn install --immutable
-#
-# pnpm:
-#   pnpm-lock.yaml -> pnpm install --frozen-lockfile
-#
-# IMPORTANT:
-# Dependencies are installed ONCE and reused by all subsequent commands.
-# ---------------------------------------------------------------------------
 
 if package_manager == "npm":
     install_cmd = "npm ci"
@@ -374,26 +450,15 @@ elif package_manager == "pnpm":
 else:
     fail(
         f"Unsupported package manager: {package_manager}",
-        2,
+        EXIT_CONFIG,
     )
 
 
-# Verify that the selected package-manager executable exists.
-if subprocess.run(
-    [
-        "bash",
-        "-lc",
-        f"command -v {package_manager}",
-    ],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    check=False,
-).returncode != 0:
-
+if not command_exists(package_manager):
     fail(
         f"Required package-manager executable is not available: "
         f"{package_manager}",
-        3,
+        EXIT_TOOL_MISSING,
     )
 
 
@@ -407,32 +472,27 @@ integration_explicit = integration_cfg.get("command")
 
 
 # ---------------------------------------------------------------------------
-# Node.js project conventions:
+# Node provider command resolution:
 #
 # Build:
-#   explicit build.command
+#   build.command
 #       >
 #   package.json scripts.build
 #
 # Unit:
-#   explicit testing.unit.command
+#   testing.unit.command
 #       >
 #   package.json scripts.test
 #
 # Integration:
-#   explicit testing.integration.command
+#   testing.integration.command
 #       >
 #   package.json scripts.integration
 #
-# The platform does NOT invent commands such as:
+# scripts.integration is the deterministic integration-test convention
+# supported by the current Node provider.
 #
-#   ng build
-#   ng test
-#   npm test
-#   npx playwright test
-#
-# unless they are explicitly provided by the client or represented by the
-# project's package.json scripts.
+# The provider does not invent application-specific commands.
 # ---------------------------------------------------------------------------
 
 build_script = "build" if "build" in scripts else None
@@ -445,17 +505,10 @@ integration_script = (
 
 
 def resolve_command(explicit, script_name, package_manager):
-    """
-    Resolve a client command.
-
-    Explicit command always wins.
-
-    Otherwise, invoke the package.json script using the detected package
-    manager.
-    """
+    """Resolve explicit command first, then deterministic Node script."""
 
     if explicit:
-        return explicit
+        return str(explicit).strip()
 
     if not script_name:
         return None
@@ -495,6 +548,8 @@ integration_command = resolve_command(
 
 # ===========================================================================
 # Validate requested capabilities
+#
+# Resolution happens before provider execution.
 # ===========================================================================
 
 if build_enabled and not build_command:
@@ -502,7 +557,7 @@ if build_enabled and not build_command:
         "Build capability is enabled but no build command could be "
         "resolved. Specify build.command or define scripts.build "
         "in package.json.",
-        2,
+        EXIT_CONFIG,
     )
 
 
@@ -511,17 +566,16 @@ if unit_enabled and not unit_command:
         "Unit testing capability is enabled but no unit-test command "
         "could be resolved. Specify testing.unit.command or define "
         "scripts.test in package.json.",
-        2,
+        EXIT_CONFIG,
     )
 
 
 if integration_enabled and not integration_command:
     fail(
-        "Integration testing capability is enabled but no integration "
-        "test command could be resolved. Specify "
-        "testing.integration.command or define scripts.integration "
-        "in package.json.",
-        2,
+        "Integration testing capability is enabled but no integration-test "
+        "command could be resolved. Specify testing.integration.command "
+        "or define scripts.integration in package.json.",
+        EXIT_CONFIG,
     )
 
 
@@ -535,6 +589,7 @@ if build_enabled:
     commands.append(
         (
             "build",
+            "build",
             build_command,
             build_working_directory,
             build_dir,
@@ -545,6 +600,7 @@ if build_enabled:
 if unit_enabled:
     commands.append(
         (
+            "unit_testing",
             "unit",
             unit_command,
             test_working_directory,
@@ -556,6 +612,7 @@ if unit_enabled:
 if integration_enabled:
     commands.append(
         (
+            "integration_testing",
             "integration",
             integration_command,
             test_working_directory,
@@ -568,52 +625,141 @@ if integration_enabled:
 # Execution state
 # ===========================================================================
 
-start_time = utc_now()
-
+provider_start = utc_now()
 results = []
+
+
+# ===========================================================================
+# Metadata helpers
+# ===========================================================================
+
+def base_context():
+    return {
+        "technology": language,
+        "runtime": required_version or None,
+        "runtime_actual": node_version,
+        "package_manager": package_manager,
+        "commit": source_commit,
+        "workflow_run": {
+            "id": ci_run_id,
+            "url": ci_run_url,
+        },
+    }
+
+
+def write_skipped_test_metadata(
+    capability,
+    suite,
+    output_dir,
+    command,
+    working_directory,
+    reason,
+):
+    metadata = {
+        "capability": capability,
+        "suite": suite,
+        "status": "skipped",
+        "reason": reason,
+        "framework": None,
+        "command": command,
+        "working_directory": os.path.relpath(
+            working_directory,
+            workspace,
+        ),
+        "total_tests": None,
+        "passed": None,
+        "failed": None,
+        "skipped": None,
+        "start_time": None,
+        "end_time": None,
+        "duration_seconds": None,
+        **base_context(),
+    }
+
+    write_json(
+        os.path.join(output_dir, "metadata.json"),
+        metadata,
+    )
+
+    write_json(
+        os.path.join(output_dir, "report.json"),
+        {
+            "capability": capability,
+            "suite": suite,
+            "status": "skipped",
+            "reason": reason,
+        },
+    )
+
+    return metadata
+
+
+# ===========================================================================
+# Write disabled-capability evidence
+# ===========================================================================
+
+if not unit_enabled:
+    write_skipped_test_metadata(
+        "unit_testing",
+        "unit",
+        unit_dir,
+        None,
+        test_working_directory,
+        "capability_disabled",
+    )
+
+
+if not integration_enabled:
+    write_skipped_test_metadata(
+        "integration_testing",
+        "integration",
+        integration_dir,
+        None,
+        test_working_directory,
+        "capability_disabled",
+    )
 
 
 # ===========================================================================
 # Phase 1 — Install dependencies ONCE
 # ===========================================================================
 
-if commands:
+print(
+    f"Installing dependencies with {package_manager}",
+    file=sys.stdout,
+)
 
-    print(
-        f"Installing dependencies with {package_manager}",
-        file=sys.stdout,
+try:
+    subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'cd "{project_working_directory}" && {install_cmd}',
+        ],
+        check=True,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
     )
 
-    try:
-        subprocess.run(
-            [
-                "bash",
-                "-lc",
-                f'cd "{build_working_directory}" && {install_cmd}',
-            ],
-            check=True,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-        )
-
-    except subprocess.CalledProcessError:
-        fail(
-            "Dependency installation failed.",
-            5,
-        )
+except subprocess.CalledProcessError:
+    fail(
+        "Dependency installation failed.",
+        EXIT_EXECUTION,
+    )
 
 
 # ===========================================================================
 # Suite execution helpers
 # ===========================================================================
 
-def start_suite(suite, command, working_directory, output_dir):
-    """
-    Start a suite without waiting.
-
-    This is used to run independent Build and Unit Test operations
-    concurrently.
-    """
+def start_suite(
+    capability,
+    suite,
+    command,
+    working_directory,
+    output_dir,
+):
+    """Start an enabled operation without waiting."""
 
     print(
         f"Executing {suite} command: {command}",
@@ -633,6 +779,7 @@ def start_suite(suite, command, working_directory, output_dir):
     )
 
     return {
+        "capability": capability,
         "suite": suite,
         "command": command,
         "working_directory": working_directory,
@@ -643,16 +790,9 @@ def start_suite(suite, command, working_directory, output_dir):
 
 
 def collect_suite_result(job):
-    """
-    Wait for a previously started suite and generate its machine-readable
-    result and metadata.
+    """Collect execution result and produce canonical metadata."""
 
-    Exit code is the authoritative generic execution result.
-
-    Framework-specific test counts remain null unless a dedicated parser
-    is implemented.
-    """
-
+    capability = job["capability"]
     suite = job["suite"]
     command = job["command"]
     working_directory = job["working_directory"]
@@ -662,48 +802,62 @@ def collect_suite_result(job):
 
     exit_code = process.wait()
 
+    suite_end = utc_now()
+
     status = "passed" if exit_code == 0 else "failed"
 
     duration = (
-        utc_now() - suite_start
+        suite_end - suite_start
     ).total_seconds()
 
-    suite_metadata = {
-        "capability": suite,
+    metadata = {
+        "capability": capability,
         "status": status,
         "command": command,
-        "working_directory": working_directory,
-        "framework": "node_scripts",
-
-        # Generic command execution does not provide reliable test counts.
-        # A future provider/report parser can populate these fields.
-        "total_tests": None,
-        "passed": None,
-        "failed": None,
-        "skipped": None,
-
+        "working_directory": os.path.relpath(
+            working_directory,
+            workspace,
+        ),
+        "start_time": suite_start.isoformat(),
+        "end_time": suite_end.isoformat(),
         "duration_seconds": duration,
+        **base_context(),
     }
 
-    # Generic execution report.
+    if suite != "build":
+        metadata.update({
+            "suite": suite,
+
+            # No framework-specific report parser exists yet.
+            "framework": None,
+
+            # Generic command execution cannot determine reliable counts.
+            "total_tests": None,
+            "passed": None,
+            "failed": None,
+            "skipped": None,
+        })
+
     write_json(
         os.path.join(output_dir, "report.json"),
         {
+            "capability": capability,
             "suite": suite,
             "status": status,
             "command": command,
             "exit_code": exit_code,
+            "start_time": suite_start.isoformat(),
+            "end_time": suite_end.isoformat(),
             "duration_seconds": duration,
         },
     )
 
-    # Standardized platform metadata.
     write_json(
         os.path.join(output_dir, "metadata.json"),
-        suite_metadata,
+        metadata,
     )
 
-    return suite_metadata
+    return metadata
 
 
 # ===========================================================================
@@ -712,12 +866,19 @@ def collect_suite_result(job):
 
 parallel_jobs = []
 
-for suite, command, working_directory, output_dir in commands:
+for (
+    capability,
+    suite,
+    command,
+    working_directory,
+    output_dir,
+) in commands:
 
     if suite in ("build", "unit"):
 
         parallel_jobs.append(
             start_suite(
+                capability,
                 suite,
                 command,
                 working_directory,
@@ -726,35 +887,12 @@ for suite, command, working_directory, output_dir in commands:
         )
 
 
-# ---------------------------------------------------------------------------
-# IMPORTANT:
-#
-# Both operations have already been started before waiting for either one.
-#
-# Therefore:
-#
-#   Build ────────────────┐
-#                         ├──> results
-#   Unit  ────────────────┘
-#
-# This preserves the performance requirement.
-#
-# If Build fails, an already-running Unit Test is NOT forcefully terminated.
-# Once both finish, the failure prevents Integration Tests from running.
-# ---------------------------------------------------------------------------
+# Both processes are started before either process is awaited.
 
 for job in parallel_jobs:
-
     result = collect_suite_result(job)
-
     results.append(result)
 
-
-# ---------------------------------------------------------------------------
-# Mandatory phase gate.
-#
-# Build and Unit Test failures prevent Integration Tests from running.
-# ---------------------------------------------------------------------------
 
 parallel_failed = any(
     result["status"] == "failed"
@@ -770,165 +908,152 @@ integration_job = next(
     (
         item
         for item in commands
-        if item[0] == "integration"
+        if item[1] == "integration"
     ),
     None,
 )
 
 
-if integration_job and not parallel_failed:
+if integration_job:
 
-    suite, command, working_directory, output_dir = integration_job
-
-    job = start_suite(
+    (
+        capability,
         suite,
         command,
         working_directory,
         output_dir,
+    ) = integration_job
+
+    if parallel_failed:
+
+        result = write_skipped_test_metadata(
+            capability,
+            suite,
+            output_dir,
+            command,
+            working_directory,
+            "upstream_failure",
+        )
+
+        results.append(result)
+
+    else:
+
+        job = start_suite(
+            capability,
+            suite,
+            command,
+            working_directory,
+            output_dir,
+        )
+
+        result = collect_suite_result(job)
+
+        results.append(result)
+
+
+# ===========================================================================
+# Build skipped metadata
+# ===========================================================================
+
+if not build_enabled:
+
+    build_metadata = {
+        "capability": "build",
+        "status": "skipped",
+        "reason": "capability_disabled",
+        "technology": language,
+        "runtime": required_version or None,
+        "runtime_actual": node_version,
+        "package_manager": package_manager,
+        "working_directory": build_cfg.get(
+            "working_directory",
+            ".",
+        ),
+        "command": None,
+        "commit": source_commit,
+        "workflow_run": {
+            "id": ci_run_id,
+            "url": ci_run_url,
+        },
+        "start_time": None,
+        "end_time": None,
+        "duration_seconds": None,
+        "artifacts": [],
+    }
+
+    write_json(
+        os.path.join(build_dir, "metadata.json"),
+        build_metadata,
     )
 
-    result = collect_suite_result(job)
-
-    results.append(result)
-
-
-# ===========================================================================
-# Final status
-# ===========================================================================
-
-final_status = (
-    "passed"
-    if all(result["status"] == "passed" for result in results)
-    else "failed"
-)
+    write_json(
+        os.path.join(build_dir, "report.json"),
+        {
+            "capability": "build",
+            "suite": "build",
+            "status": "skipped",
+            "reason": "capability_disabled",
+        },
+    )
 
 
 # ===========================================================================
-# Final metadata
-# ===========================================================================
-
-end_time = utc_now()
-
-duration_seconds = (
-    end_time - start_time
-).total_seconds()
-
-
-# ---------------------------------------------------------------------------
-# Build metadata
+# Final provider status
 #
-# Build metadata is specifically about the Build capability.
-# Test results are NOT embedded here because they have their own
-# standardized metadata locations.
-# ---------------------------------------------------------------------------
-
-build_result = next(
-    (
-        result
-        for result in results
-        if result["capability"] == "build"
-    ),
-    None,
-)
-
-
-build_metadata = {
-    "capability": "build",
-    "status": (
-        build_result["status"]
-        if build_enabled and build_result
-        else "skipped"
-    ),
-
-    "technology": language,
-
-    "runtime": required_version or None,
-    "runtime_actual": node_version,
-
-    "package_manager": package_manager,
-
-    "working_directory": build_cfg.get(
-        "working_directory",
-        ".",
-    ),
-
-    "command": (
-        build_command
-        if build_enabled
-        else None
-    ),
-
-    "start_time": start_time.isoformat(),
-    "end_time": end_time.isoformat(),
-    "duration_seconds": duration_seconds,
-
-    "artifacts": [],
-}
-
-
-write_json(
-    os.path.join(build_dir, "metadata.json"),
-    build_metadata,
-)
-
-
-# Build report contains ONLY the Build result.
-write_json(
-    os.path.join(build_dir, "report.json"),
-    {
-        "suite": "build",
-        "result": build_result,
-    },
-)
-
-
-# ===========================================================================
-# Provider exit status
-#
-# 0 -> success
-# 5 -> execution/application failure
-#
-# Configuration/tool errors have already exited earlier with their
-# corresponding platform exit codes.
+# Only actual failures make the provider fail.
+# Disabled/skipped capabilities do not.
 # ===========================================================================
 
-sys.exit(
-    0
-    if final_status == "passed"
-    else 5
+failed_results = [
+    result
+    for result in results
+    if result.get("status") == "failed"
+]
+
+provider_end = utc_now()
+
+print(
+    "Build & Test provider duration: "
+    f"{(provider_end - provider_start).total_seconds():.3f}s"
 )
+
+
+if failed_results:
+    sys.exit(EXIT_EXECUTION)
+
+sys.exit(EXIT_SUCCESS)
 
 PY
+then
+    EXIT_CODE=0
+else
+    EXIT_CODE=$?
+fi
+
 
 # ---------------------------------------------------------------------------
 # Shell-level result handling
 # ---------------------------------------------------------------------------
 
-EXIT_CODE=$?
-
 if [ "$EXIT_CODE" -eq 0 ]; then
 
     log_info "Build & Test provider completed successfully"
 
+elif [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_CONFIG" ]; then
+
+    log_error \
+        "Build & Test provider failed due to configuration error"
+
+elif [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_TOOL_MISSING" ]; then
+
+    log_error \
+        "Build & Test provider failed because a required runtime/tool is missing"
+
 else
 
-    if [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_CONFIG" ]; then
-
-        log_error \
-            "Build & Test provider failed due to configuration error"
-
-    elif [ "$EXIT_CODE" -eq "$PLATFORM_EXIT_TOOL_MISSING" ]; then
-
-        log_error \
-            "Build & Test provider failed because a required " \
-            "runtime/tool is missing"
-
-    else
-
-        log_error \
-            "Build & Test provider failed with exit code $EXIT_CODE"
-
-    fi
+    log_error \
+        "Build & Test provider failed with exit code $EXIT_CODE"
 
 fi
 
